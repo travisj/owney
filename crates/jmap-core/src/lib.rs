@@ -57,6 +57,7 @@ pub struct Limits {
     pub max_calls_in_request: usize,
     pub max_objects_in_get: usize,
     pub max_objects_in_set: usize,
+    pub max_call_duration: Option<std::time::Duration>,
 }
 
 impl Default for Limits {
@@ -69,6 +70,7 @@ impl Default for Limits {
             max_calls_in_request: 16,
             max_objects_in_get: 500,
             max_objects_in_set: 500,
+            max_call_duration: None,
         }
     }
 }
@@ -222,9 +224,18 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
             return Err(MethodError::UnknownMethod);
         }
         let arguments = refs::resolve_references(arguments, prior)?;
-        match AssertUnwindSafe(handler(arguments, ctx.clone()))
-            .catch_unwind()
-            .await
+        let fut = async move {
+            match self.limits.max_call_duration {
+                Some(limit) => {
+                    match tokio::time::timeout(limit, handler(arguments, ctx.clone())).await {
+                        Ok(inner) => inner,
+                        Err(_) => Err(MethodError::ServerFail("timeout".into())),
+                    }
+                }
+                None => handler(arguments, ctx.clone()).await,
+            }
+        };
+        match AssertUnwindSafe(fut).catch_unwind().await
         {
             Ok(value) => value,
             Err(panic) => {
@@ -483,6 +494,31 @@ mod tests {
         );
         assert!(response.method_responses[0].arguments()["description"]
             .as_str().unwrap().contains("handler explosion"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handler_exceeding_timeout_becomes_server_fail() {
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0").with_limits(Limits {
+            max_call_duration: Some(std::time::Duration::from_millis(10)),
+            ..Limits::default()
+        });
+        dispatcher.register("Thing/sleep", CORE_CAPABILITY, |_args, _ctx| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(json!({}))
+        });
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [["Thing/sleep", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        assert_eq!(
+            response.method_responses[0].arguments()["type"], "serverFail",
+        );
     }
 
     #[tokio::test]
