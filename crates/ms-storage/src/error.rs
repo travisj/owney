@@ -18,6 +18,9 @@ pub enum StorageError {
     #[error("corrupt data: {0}")]
     Corrupt(String),
 
+    #[error("bad input: {0}")]
+    BadInput(String),
+
     #[error("blob {0} not found")]
     BlobNotFound(ms_core::BlobId),
 
