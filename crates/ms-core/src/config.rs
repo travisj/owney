@@ -175,17 +175,18 @@ impl Config {
         Ok(config)
     }
 
+    /// Conservative DNS-name check. Accepts what most operators expect:
+    /// lowercase letters / digits / hyphens, dotted labels, no whitespace,
+    /// no trailing dot, no leading dot, no empty labels, total length ≤ 253.
+    /// This is *not* a full RFC 1123 / 5890 parser — IDN (`xn--` punycode)
+    /// and the internationalized local-part are out of scope — but it's
+    /// good enough to catch typos at startup before they bite at SMTP time.
     fn validate(&self) -> Result<(), ConfigError> {
         for (field, value) in [
             ("server.domain", &self.server.domain),
             ("server.hostname", &self.server.hostname),
         ] {
-            if value.is_empty() || !value.contains('.') || value.contains(char::is_whitespace) {
-                return Err(ConfigError::Invalid {
-                    field,
-                    reason: format!("{value:?} is not a valid DNS name"),
-                });
-            }
+            validate_dns_name(field, value)?;
         }
         Ok(())
     }
@@ -248,6 +249,46 @@ filter = "info"
     }
 }
 
+/// Conservative DNS-name validator. Not a full RFC 1123 / 5890 parser.
+fn validate_dns_name(field: &'static str, value: &str) -> Result<(), ConfigError> {
+    if value.is_empty() || value.len() > 253 {
+        return Err(ConfigError::Invalid {
+            field,
+            reason: format!("{value:?} is not a valid DNS name"),
+        });
+    }
+    if value.starts_with('.') || value.ends_with('.') {
+        return Err(ConfigError::Invalid {
+            field,
+            reason: format!("{value:?} has leading or trailing dot"),
+        });
+    }
+    for label in value.split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return Err(ConfigError::Invalid {
+                field,
+                reason: format!("{value:?} has an empty or overlong label"),
+            });
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(ConfigError::Invalid {
+                field,
+                reason: format!("{value:?} has a label starting or ending with '-'"),
+            });
+        }
+        if !label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(ConfigError::Invalid {
+                field,
+                reason: format!("{value:?} contains non-DNS characters"),
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,5 +347,38 @@ mod tests {
             result.is_err(),
             "typos in config must be errors, not silently ignored"
         );
+    }
+
+    #[test]
+    fn dns_name_validator_rejects_garbage() {
+        for bad in [
+            "",              // empty
+            ".",             // leading dot
+            "example.",      // trailing dot
+            ".example.com",  // leading dot
+            "ex..ample.com", // empty label
+            "example-.com",  // label ends with '-'
+            "-example.com",  // label starts with '-'
+            "exa mple.com",  // whitespace
+            &"a".repeat(64), // overlong label (64 chars)
+            "exömple.com",   // non-ASCII
+        ] {
+            let err = validate_dns_name("server.domain", bad)
+                .expect_err(&format!("{bad:?} must be rejected"));
+            assert!(matches!(err, ConfigError::Invalid { .. }));
+        }
+    }
+
+    #[test]
+    fn dns_name_validator_accepts_normal_names() {
+        for ok in [
+            "example.com",
+            "mail.example.com",
+            "host1.internal.lan",
+            "_dmarc.example.com", // underscore is allowed (RFC 2782 SRV)
+        ] {
+            validate_dns_name("server.domain", ok)
+                .unwrap_or_else(|e| panic!("{ok:?} accepted: {e:?}"));
+        }
     }
 }
