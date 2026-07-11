@@ -14,6 +14,8 @@ authors.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+futures = "0.3"
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -34,9 +34,11 @@ pub mod session;
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use serde_json::Value;
 
 pub use envelope::{Invocation, MethodError, Request, RequestError, Response};
@@ -220,7 +222,23 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
             return Err(MethodError::UnknownMethod);
         }
         let arguments = refs::resolve_references(arguments, prior)?;
-        handler(arguments, ctx.clone()).await
+        match AssertUnwindSafe(handler(arguments, ctx.clone()))
+            .catch_unwind()
+            .await
+        {
+            Ok(value) => value,
+            Err(panic) => {
+                let msg = if let Some(s) = panic.downcast_ref::<&'static str>() {
+                    (*s).to_owned()
+                } else if let Some(s) = panic.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "handler panicked".to_owned()
+                };
+                tracing::error!(method = %name, "handler panicked: {msg}");
+                Err(MethodError::ServerFail(msg))
+            }
+        }
     }
 }
 
@@ -440,6 +458,53 @@ mod tests {
         assert_eq!(response.method_responses[0].name(), "Thing/crash");
         // (A separate test in Phase 3 will replace this with a
         // MethodError::ServerFail expectation.)
+    }
+
+    #[tokio::test]
+    async fn panicking_handler_becomes_server_fail() {
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        dispatcher.register("Thing/crash", CORE_CAPABILITY, |_args, _ctx| async {
+            panic!("handler explosion");
+        });
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [["Thing/crash", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        assert_eq!(response.method_responses[0].name(), "error");
+        assert_eq!(
+            response.method_responses[0].arguments()["type"],
+            "serverFail"
+        );
+        assert!(response.method_responses[0].arguments()["description"]
+            .as_str().unwrap().contains("handler explosion"));
+    }
+
+    #[tokio::test]
+    async fn subsequent_calls_run_after_a_panic() {
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        dispatcher.register("Thing/crash", CORE_CAPABILITY, |_args, _ctx| async { panic!("x") });
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [
+                        ["Thing/crash", {}, "c1"],
+                        ["Core/echo", {"ok": 1}, "c2"],
+                    ],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        assert_eq!(response.method_responses[0].name(), "error");
+        assert_eq!(response.method_responses[1].name(), "Core/echo");
+        assert_eq!(response.method_responses[1].arguments()["ok"], 1);
     }
 
     #[tokio::test]
