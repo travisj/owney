@@ -381,4 +381,68 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{ok:?} accepted: {e:?}"));
         }
     }
+
+    #[test]
+    fn config_load_missing_file_yields_read_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nope.toml");
+        let err = Config::load(&path).expect_err("missing file must error");
+        assert!(matches!(err, ConfigError::Read { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn config_load_parse_error_yields_parse_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, b"[server\ndomain = ").expect("write");
+        let err = Config::load(&path).expect_err("broken toml must error");
+        assert!(matches!(err, ConfigError::Parse { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn config_load_validate_error_yields_invalid_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad.toml");
+        std::fs::write(
+            &path,
+            br#"
+            [server]
+            domain = "bad domain with spaces"
+            hostname = "mail.example.com"
+            [storage]
+            data_dir = "/tmp/x"
+            [smtp]
+            listen = ["0.0.0.0:25"]
+            "#,
+        )
+        .expect("write");
+        let err = Config::load(&path).expect_err("invalid config must error");
+        assert!(matches!(err, ConfigError::Invalid { .. }), "got: {err:?}");
+    }
+
+    #[test]
+    fn config_load_deny_unknown_fields_on_optional_sections() {
+        // A typo in `[ai]` (currently `Option<AiConfig>`) must surface,
+        // because `AiConfig` carries `deny_unknown_fields`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("typo.toml");
+        std::fs::write(
+            &path,
+            br#"
+            [server]
+            domain = "example.com"
+            hostname = "mail.example.com"
+            [storage]
+            data_dir = "/tmp/x"
+            [smtp]
+            listen = ["0.0.0.0:25"]
+            [ai]
+            provide = "claude"
+            [log]
+            "#,
+        )
+        .expect("write");
+        let err = Config::load(&path).expect_err("typo must error");
+        assert!(matches!(err, ConfigError::Parse { .. }), "got: {err:?}");
+    }
 }
