@@ -174,7 +174,11 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
         if request.using.is_empty() {
             return Err(RequestError::NotRequest);
         }
+        let mut seen = std::collections::HashSet::with_capacity(request.using.len());
         for capability in &request.using {
+            if !seen.insert(capability.as_str()) {
+                return Err(RequestError::NotRequest);
+            }
             if !self.capabilities.contains_key(capability) {
                 return Err(RequestError::UnknownCapability(capability.clone()));
             }
@@ -247,6 +251,22 @@ mod tests {
             Invocation("Core/echo".into(), json!({"hello": "world"}), "c1".into())
         );
         assert_eq!(response.session_state, "s0");
+    }
+
+    #[tokio::test]
+    async fn duplicate_using_is_rejected() {
+        let dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        let err = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY, CORE_CAPABILITY],
+                    "methodCalls": [["Core/echo", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect_err("dup using");
+        assert!(matches!(err, RequestError::NotRequest));
     }
 
     #[tokio::test]
