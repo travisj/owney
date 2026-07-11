@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::envelope::{Invocation, MethodError};
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ResultReference {
     result_of: String,
     name: String,
@@ -209,6 +209,17 @@ mod tests {
     fn bad_path_is_an_error() {
         let args = json!({
             "#ids": {"resultOf": "c0", "name": "Foo/query", "path": "/nope/deeper"},
+        });
+        assert!(matches!(
+            resolve_references(args, &prior()),
+            Err(MethodError::InvalidResultReference(_))
+        ));
+    }
+
+    #[test]
+    fn reference_with_unknown_field_is_an_error() {
+        let args = json!({
+            "#ids": {"resultOf": "c0", "name": "Foo/query", "path": "/ids", "extra": 1},
         });
         assert!(matches!(
             resolve_references(args, &prior()),
