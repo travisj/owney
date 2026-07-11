@@ -198,7 +198,16 @@ impl fmt::Display for ModSeq {
 }
 
 /// The synchronizable data types tracked by modseq state.
+///
+/// `EmailSubmission` is currently keyed per-account, but RFC 8621 §7
+/// defines it per-identity. When per-identity tracking lands, the
+/// identity scope will need a separate modseq axis (i.e. a tuple
+/// `(account_id, identity_id, data_type)`) — at which point this
+/// enum will gain `Identity` or `EmailSubmission(identity_scope)`
+/// variants. `#[non_exhaustive]` prevents downstream exhaustive
+/// matches from breaking that evolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DataType {
     Email,
     Mailbox,
