@@ -12,4 +12,6 @@ pub mod time;
 
 pub use config::Config;
 pub use error::ConfigError;
-pub use id::{AccountId, BlobId, DataType, EmailId, MailboxId, ModSeq, ThreadId};
+pub use id::{
+    AccountId, BlobId, CreateId, DataType, EmailId, EmailSubmissionId, MailboxId, ModSeq, ThreadId,
+};

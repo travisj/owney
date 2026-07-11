@@ -60,6 +60,30 @@ uuid_id!(
     /// A conversation thread grouping emails.
     ThreadId
 );
+uuid_id!(
+    /// A single email-submission record (RFC 8621 §7).
+    EmailSubmissionId
+);
+
+/// A client-supplied creation reference (RFC 8620 §3.6.1). Distinct
+/// from server-assigned ids so the type system can catch mismatches;
+/// the inner string is the client's `clientCreationId`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CreateId(pub String);
+
+impl fmt::Display for CreateId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for CreateId {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(CreateId(s.to_owned()))
+    }
+}
 
 /// BLAKE3 digest of a blob's plaintext content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -200,5 +224,30 @@ mod tests {
         assert_eq!(id, parsed);
         assert!("zz".repeat(32).parse::<BlobId>().is_err());
         assert!("abcd".parse::<BlobId>().is_err());
+    }
+
+    #[test]
+    fn create_id_round_trips_via_string() {
+        let id = CreateId("clientCreationId-42".into());
+        assert_eq!(id.to_string(), "clientCreationId-42");
+        let parsed: CreateId = "clientCreationId-42".parse().unwrap();
+        assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn create_id_serde_round_trips_as_string() {
+        let id = CreateId("abc".into());
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "\"abc\"");
+        let back: CreateId = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, id);
+    }
+
+    #[test]
+    fn email_submission_id_orders_uuid_v7() {
+        let a = EmailSubmissionId::new();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let b = EmailSubmissionId::new();
+        assert!(a.as_uuid() <= b.as_uuid());
     }
 }
