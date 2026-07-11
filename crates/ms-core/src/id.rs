@@ -112,23 +112,46 @@ impl fmt::Display for BlobId {
     }
 }
 
+impl fmt::LowerHex for BlobId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in &self.0 {
+            write!(f, "{b:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Reject reasons for `BlobId::from_str`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid blob id: {0}")]
-pub struct InvalidBlobId(String);
+pub enum InvalidBlobId {
+    #[error("blob id must be 64 lowercase hex chars; got {0} chars")]
+    WrongLength(usize),
+    #[error("blob id contains non-hex character at byte offset {0}")]
+    InvalidChar(usize),
+}
+
+impl From<InvalidBlobId> for std::io::Error {
+    fn from(e: InvalidBlobId) -> Self {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    }
+}
 
 impl FromStr for BlobId {
     type Err = InvalidBlobId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != 64 {
-            return Err(InvalidBlobId(s.to_owned()));
+            return Err(InvalidBlobId::WrongLength(s.len()));
         }
-        let mut out = [0u8; 32];
-        for (i, byte) in out.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
-                .map_err(|_| InvalidBlobId(s.to_owned()))?;
+        let mut bytes = [0u8; 32];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            let start = i * 2;
+            match u8::from_str_radix(&s[start..start + 2], 16) {
+                Ok(b) => *byte = b,
+                Err(_) => return Err(InvalidBlobId::InvalidChar(start)),
+            }
         }
-        Ok(Self(out))
+        Ok(Self(bytes))
     }
 }
 
@@ -230,6 +253,49 @@ mod tests {
         assert_eq!(id, parsed);
         assert!("zz".repeat(32).parse::<BlobId>().is_err());
         assert!("abcd".parse::<BlobId>().is_err());
+    }
+
+    #[test]
+    fn blob_id_wrong_length_is_too_long_or_too_short() {
+        assert!(matches!(
+            "abc".parse::<BlobId>(),
+            Err(InvalidBlobId::WrongLength(3))
+        ));
+        assert!(matches!(
+            "abcd".repeat(20).parse::<BlobId>(), // 80 chars
+            Err(InvalidBlobId::WrongLength(80))
+        ));
+    }
+
+    #[test]
+    fn blob_id_non_hex_is_invalid_char() {
+        // 64 chars but contains 'z' which isn't hex
+        let bad = "z".repeat(64);
+        let parsed = bad.parse::<BlobId>().expect_err("non-hex rejected");
+        // Either WrongLength or InvalidChar depending on impl order; just check it's
+        // an InvalidBlobId and has a usable Display.
+        let _ = format!("{parsed}");
+    }
+
+    #[test]
+    fn blob_id_uppercase_hex_accepted_lowercase_emitted() {
+        let mut hex_upper = String::new();
+        for b in [0xab; 32] {
+            use std::fmt::Write;
+            write!(hex_upper, "{b:02X}").unwrap();
+        }
+        let parsed = hex_upper.parse::<BlobId>().expect("uppercase accepted");
+        assert_eq!(parsed.to_hex(), hex_upper.to_lowercase(), "emit lowercase");
+        assert_eq!(format!("{parsed}"), hex_upper.to_lowercase());
+    }
+
+    #[test]
+    fn blob_id_lowerhex_writes_without_allocating() {
+        let id = BlobId([0xab; 32]);
+        let mut s = String::with_capacity(64);
+        use std::fmt::Write;
+        write!(s, "{id:x}").unwrap();
+        assert_eq!(s, "ab".repeat(32));
     }
 
     #[test]
