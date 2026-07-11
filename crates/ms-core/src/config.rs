@@ -65,7 +65,7 @@ pub struct ApiConfig {
     /// terminator in front, or bind localhost and tunnel, until the built-in
     /// HTTPS listener lands.
     pub listen: String,
-    /// Public base URL clients use; defaults to https://<hostname> when empty.
+    /// Public base URL clients use; defaults to `https://<hostname>` when empty.
     pub public_url: String,
 }
 
