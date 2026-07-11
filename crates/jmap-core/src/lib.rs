@@ -95,7 +95,7 @@ type BoxedHandler<Ctx> = Box<
 
 /// The method registry and request processor. `Ctx` is the embedder's
 /// per-request context (authenticated account, storage handles, ...).
-pub struct Dispatcher<Ctx> {
+pub struct Dispatcher<Ctx: Send + Sync + 'static> {
     limits: Limits,
     /// capability urn → capability object (session `capabilities`).
     capabilities: BTreeMap<String, Value>,
@@ -105,7 +105,7 @@ pub struct Dispatcher<Ctx> {
     session_state: String,
 }
 
-impl<Ctx> std::fmt::Debug for Dispatcher<Ctx> {
+impl<Ctx: Send + Sync + 'static> std::fmt::Debug for Dispatcher<Ctx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Dispatcher")
             .field("methods", &self.methods.keys().collect::<Vec<_>>())
