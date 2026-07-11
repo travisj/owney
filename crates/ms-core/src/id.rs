@@ -157,8 +157,14 @@ impl<'de> Deserialize<'de> for BlobId {
 pub struct ModSeq(pub u64);
 
 impl ModSeq {
-    pub fn next(self) -> Self {
-        Self(self.0 + 1)
+    /// Advance to the next modseq, returning `None` on overflow.
+    ///
+    /// At `u64::MAX` (~10^19 operations per data type), JMAP delta-sync
+    /// becomes useless and the storage layer should refuse to advance
+    /// rather than wrap to 0. Operators should reseed modseqs at that
+    /// point (effectively a schema migration).
+    pub fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(ModSeq)
     }
 }
 
@@ -249,5 +255,19 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(5));
         let b = EmailSubmissionId::new();
         assert!(a.as_uuid() <= b.as_uuid());
+    }
+
+    #[test]
+    fn modseq_overflow_returns_none() {
+        let max = ModSeq(u64::MAX);
+        assert!(max.next().is_none(), "overflow must surface, not wrap");
+
+        let one = ModSeq(1);
+        let two = one.next().expect("normal bump");
+        assert_eq!(two, ModSeq(2));
+
+        let zero = ModSeq::default();
+        let one_again = zero.next().expect("default = 0, +1 = 1");
+        assert_eq!(one_again, ModSeq(1));
     }
 }
