@@ -93,13 +93,9 @@ fn tool(name: &str, description: &str, schema: Value) -> Value {
 
 /// Handle one JSON-RPC request. Returns `None` for notifications (no id).
 pub async fn handle(ctx: &McpCtx, request: &Value) -> Option<Value> {
-    let id = request.get("id").cloned();
+    let id = request.get("id").cloned()?;
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let params = request.get("params").cloned().unwrap_or(json!({}));
-
-    // Notifications (no id) get no reply.
-    id.as_ref()?;
-    let id = id.unwrap();
 
     let result = match method {
         "initialize" => Ok(json!({
