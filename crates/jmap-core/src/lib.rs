@@ -171,6 +171,9 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
 
     /// Process one JMAP request to completion.
     pub async fn process(&self, request: Request, ctx: Arc<Ctx>) -> Result<Response, RequestError> {
+        if request.using.is_empty() {
+            return Err(RequestError::NotRequest);
+        }
         for capability in &request.using {
             if !self.capabilities.contains_key(capability) {
                 return Err(RequestError::UnknownCapability(capability.clone()));
@@ -244,6 +247,22 @@ mod tests {
             Invocation("Core/echo".into(), json!({"hello": "world"}), "c1".into())
         );
         assert_eq!(response.session_state, "s0");
+    }
+
+    #[tokio::test]
+    async fn empty_using_rejects_request() {
+        let dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        let err = dispatcher
+            .process(
+                request(json!({
+                    "using": [],
+                    "methodCalls": [["Core/echo", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect_err("empty using is invalid");
+        assert!(matches!(err, RequestError::NotRequest));
     }
 
     #[tokio::test]
