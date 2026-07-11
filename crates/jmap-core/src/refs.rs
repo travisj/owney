@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::envelope::{Invocation, MethodError};
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ResultReference {
     result_of: String,
     name: String,
@@ -102,6 +102,16 @@ fn eval_tokens(value: &Value, tokens: &[&str]) -> Option<Value> {
             let index: usize = token.parse().ok()?;
             eval_tokens(items.get(index)?, rest)
         }
+        Value::Object(map) if token == "*" => {
+            let mut flattened = Vec::new();
+            for (_k, item) in map {
+                match eval_tokens(item, rest)? {
+                    Value::Array(inner) => flattened.extend(inner),
+                    other => flattened.push(other),
+                }
+            }
+            Some(Value::Array(flattened))
+        }
         Value::Object(map) => eval_tokens(map.get(token.as_str())?, rest),
         _ => None,
     }
@@ -127,6 +137,19 @@ mod tests {
         )]
     }
 
+    fn prior_with_object() -> Vec<Invocation> {
+        vec![Invocation(
+            "Foo/list".to_owned(),
+            json!({
+                "by_tag": {
+                    "important": ["id1", "id2"],
+                    "spam": ["id3"],
+                }
+            }),
+            "c0".to_owned(),
+        )]
+    }
+
     #[test]
     fn plain_pointer() {
         let args = json!({
@@ -146,6 +169,17 @@ mod tests {
         });
         let resolved = resolve_references(args, &prior()).expect("resolve");
         assert_eq!(resolved["ids"], json!(["e1", "e2", "e3"]));
+    }
+
+    #[test]
+    fn wildcard_against_object_flattens_values() {
+        let args = json!({
+            "#ids": {"resultOf": "c0", "name": "Foo/list", "path": "/by_tag/*"},
+        });
+        let resolved = resolve_references(args, &prior_with_object()).expect("resolve");
+        // Per RFC 8620 §3.7: wildcard on an object applies to all values
+        // and flattens one level of arrays.
+        assert_eq!(resolved["ids"], json!(["id1", "id2", "id3"]));
     }
 
     #[test]
@@ -180,5 +214,36 @@ mod tests {
             resolve_references(args, &prior()),
             Err(MethodError::InvalidResultReference(_))
         ));
+    }
+
+    #[test]
+    fn reference_with_unknown_field_is_an_error() {
+        let args = json!({
+            "#ids": {"resultOf": "c0", "name": "Foo/query", "path": "/ids", "extra": 1},
+        });
+        assert!(matches!(
+            resolve_references(args, &prior()),
+            Err(MethodError::InvalidResultReference(_))
+        ));
+    }
+
+    #[test]
+    fn json_pointer_escapes() {
+        let prior = vec![Invocation(
+            "Foo/get".to_owned(),
+            json!({"data": {"a/b": 1, "c~d": 2}}),
+            "c0".to_owned(),
+        )];
+        let args = json!({
+            "#v": {"resultOf": "c0", "name": "Foo/get", "path": "/data/a~1b"},
+        });
+        let resolved = resolve_references(args, &prior).expect("resolve");
+        assert_eq!(resolved["v"], json!(1));
+
+        let args = json!({
+            "#v": {"resultOf": "c0", "name": "Foo/get", "path": "/data/c~0d"},
+        });
+        let resolved = resolve_references(args, &prior).expect("resolve");
+        assert_eq!(resolved["v"], json!(2));
     }
 }

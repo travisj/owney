@@ -1,4 +1,18 @@
 //! The JMAP request/response envelope (RFC 8620 §3).
+//!
+//! - [`Request`] is the wire-level request type. Its `using` field
+//!   lists the capability URNs the request uses; `method_calls` is a
+//!   parallel array of [`Invocation`]s.
+//! - [`Response`] is the wire-level response. Its `method_responses`
+//!   is a parallel array of [`Invocation`]s; the `created_ids`
+//!   field, if present, echoes the client's `createdIds` map
+//!   unchanged (RFC 8620 §3.6.1).
+//! - [`RequestError`] is a request-level error and maps to an
+//!   RFC 7807 problem-details body and HTTP 400 (see
+//!   [`RequestError::problem_details`]).
+//! - [`MethodError`] is a method-level error. It appears inline in
+//!   `methodResponses` as `["error", {type, description?}, callId]`
+//!   (RFC 8620 §3.6.2).
 
 use std::collections::BTreeMap;
 
