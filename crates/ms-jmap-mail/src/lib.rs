@@ -1,0 +1,784 @@
+//! RFC 8621 mail methods over ms-storage.
+//!
+//! `register` adds Mailbox/Email/Thread get/query/changes and Email/set
+//! (keywords + mailbox moves) to a jmap-core dispatcher. State tokens are the
+//! per-type modseqs maintained by ms-storage — `/changes` is a direct range
+//! query, exactly the discipline the storage layer enforces on every write.
+
+use std::sync::Arc;
+
+use jmap_core::{Dispatcher, MethodError};
+use ms_api::JmapCtx;
+use ms_core::DataType;
+use ms_storage::EmailRow;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+pub const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
+pub const SUBMISSION_CAPABILITY: &str = "urn:ietf:params:jmap:submission";
+
+/// Session capability object for `urn:ietf:params:jmap:mail`.
+pub fn mail_capability() -> Value {
+    json!({
+        "maxMailboxesPerEmail": 32,
+        "maxMailboxDepth": 10,
+        "maxSizeMailboxName": 200,
+        "maxSizeAttachmentsPerEmail": 50_000_000u64,
+        "emailQuerySortOptions": ["receivedAt"],
+        "mayCreateTopLevelMailbox": true,
+    })
+}
+
+/// Register all mail methods on the dispatcher.
+pub fn register(dispatcher: &mut Dispatcher<JmapCtx>) {
+    dispatcher.add_capability(MAIL_CAPABILITY, mail_capability());
+
+    dispatcher.register("Mailbox/get", MAIL_CAPABILITY, mailbox_get);
+    dispatcher.register("Mailbox/changes", MAIL_CAPABILITY, |args, ctx| {
+        changes(args, ctx, DataType::Mailbox)
+    });
+    dispatcher.register("Email/get", MAIL_CAPABILITY, email_get);
+    dispatcher.register("Email/query", MAIL_CAPABILITY, email_query);
+    dispatcher.register("Email/changes", MAIL_CAPABILITY, |args, ctx| {
+        changes(args, ctx, DataType::Email)
+    });
+    dispatcher.register("Email/set", MAIL_CAPABILITY, email_set);
+    dispatcher.register("Thread/get", MAIL_CAPABILITY, thread_get);
+    dispatcher.register("Thread/changes", MAIL_CAPABILITY, |args, ctx| {
+        changes(args, ctx, DataType::Thread)
+    });
+
+    dispatcher.add_capability(
+        SUBMISSION_CAPABILITY,
+        json!({"maxDelayedSend": 0, "submissionExtensions": {}}),
+    );
+    dispatcher.register("Identity/get", SUBMISSION_CAPABILITY, identity_get);
+    dispatcher.register("EmailSubmission/set", SUBMISSION_CAPABILITY, submission_set);
+}
+
+fn storage_err(err: ms_storage::StorageError) -> MethodError {
+    MethodError::ServerFail(err.to_string())
+}
+
+/// Every mail method takes accountId; reject calls for other accounts.
+fn check_account(ctx: &JmapCtx, account_id: &str) -> Result<ms_core::AccountId, MethodError> {
+    if account_id != ctx.account.id.to_string() {
+        return Err(MethodError::AccountNotFound);
+    }
+    Ok(ctx.account.id)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetArgs {
+    account_id: String,
+    #[serde(default)]
+    ids: Option<Vec<String>>,
+    #[serde(default)]
+    fetch_text_body_values: bool,
+}
+
+async fn mailbox_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let mailboxes = ctx
+        .storage
+        .mailboxes(account_id)
+        .await
+        .map_err(storage_err)?;
+    let state = ctx
+        .storage
+        .state(account_id, DataType::Mailbox)
+        .await
+        .map_err(storage_err)?;
+
+    let mut list = Vec::new();
+    let mut not_found: Vec<String> = Vec::new();
+    match &args.ids {
+        None => {
+            list = mailboxes.iter().map(mailbox_json).collect();
+        }
+        Some(ids) => {
+            for id in ids {
+                match mailboxes.iter().find(|m| &m.id == id) {
+                    Some(mailbox) => list.push(mailbox_json(mailbox)),
+                    None => not_found.push(id.clone()),
+                }
+            }
+        }
+    }
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "state": state.to_string(),
+        "list": list,
+        "notFound": not_found,
+    }))
+}
+
+fn mailbox_json(mailbox: &ms_storage::MailboxRow) -> Value {
+    json!({
+        "id": mailbox.id,
+        "name": mailbox.name,
+        "parentId": mailbox.parent_id,
+        "role": mailbox.role,
+        "sortOrder": mailbox.sort_order,
+        "totalEmails": mailbox.total_emails,
+        "unreadEmails": mailbox.unread_emails,
+        "totalThreads": mailbox.total_emails,
+        "unreadThreads": mailbox.unread_emails,
+        "myRights": {
+            "mayReadItems": true, "mayAddItems": true, "mayRemoveItems": true,
+            "maySetSeen": true, "maySetKeywords": true, "mayCreateChild": true,
+            "mayRename": true, "mayDelete": true, "maySubmit": true,
+        },
+        "isSubscribed": true,
+    })
+}
+
+async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let ids = args
+        .ids
+        .as_ref()
+        .ok_or_else(|| MethodError::InvalidArguments("Email/get requires ids".into()))?;
+    let parsed_ids: Vec<ms_core::EmailId> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+
+    let rows = ctx
+        .storage
+        .emails_by_ids(account_id, parsed_ids)
+        .await
+        .map_err(storage_err)?;
+    let state = ctx
+        .storage
+        .state(account_id, DataType::Email)
+        .await
+        .map_err(storage_err)?;
+
+    let mut list = Vec::with_capacity(rows.len());
+    for row in &rows {
+        list.push(email_json(&ctx, row, args.fetch_text_body_values).await?);
+    }
+    let not_found: Vec<&String> = ids
+        .iter()
+        .filter(|id| !rows.iter().any(|r| &&r.id == id))
+        .collect();
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "state": state.to_string(),
+        "list": list,
+        "notFound": not_found,
+    }))
+}
+
+/// Build the RFC 8621 Email object. Envelope-level metadata comes from the
+/// database; address headers, preview, and body text are parsed on demand
+/// from the (decrypted) raw blob.
+async fn email_json(ctx: &JmapCtx, row: &EmailRow, fetch_body: bool) -> Result<Value, MethodError> {
+    let mut email = json!({
+        "id": row.id,
+        "blobId": row.blob_id,
+        "threadId": row.thread_id,
+        "mailboxIds": row.mailbox_ids.iter().map(|id| (id.clone(), Value::Bool(true))).collect::<serde_json::Map<_,_>>(),
+        "keywords": row.keywords.iter().map(|k| (k.clone(), Value::Bool(true))).collect::<serde_json::Map<_,_>>(),
+        "size": row.size,
+        "receivedAt": ms_core::time::iso8601_utc(row.received_at),
+        "messageId": row.message_id.as_ref().map(|id| vec![id.clone()]),
+        "subject": row.subject,
+        "pgpStatus": row
+            .pgp_status
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok()),
+    });
+
+    let blob_id = row
+        .blob_id
+        .parse()
+        .map_err(|_| MethodError::ServerFail("bad blob id".into()))?;
+    let raw = ctx.storage.get_blob(blob_id).await.map_err(storage_err)?;
+    if let Some(message) = mail_parser::MessageParser::default().parse(&raw) {
+        email["from"] = addresses(message.from());
+        email["to"] = addresses(message.to());
+        email["cc"] = addresses(message.cc());
+        email["sentAt"] = message
+            .date()
+            .map(|d| Value::String(d.to_rfc3339()))
+            .unwrap_or(Value::Null);
+        let body = message.body_text(0).unwrap_or_default();
+        email["preview"] = Value::String(body.chars().take(200).collect::<String>());
+        if fetch_body {
+            email["bodyValues"] = json!({
+                "1": {"value": body, "isTruncated": false, "isEncodingProblem": false},
+            });
+            email["textBody"] =
+                json!([{"partId": "1", "blobId": row.blob_id, "type": "text/plain"}]);
+        }
+    }
+    Ok(email)
+}
+
+fn addresses(list: Option<&mail_parser::Address<'_>>) -> Value {
+    match list {
+        None => Value::Null,
+        Some(address) => Value::Array(
+            address
+                .iter()
+                .map(|addr| {
+                    json!({
+                        "name": addr.name(),
+                        "email": addr.address().unwrap_or_default(),
+                    })
+                })
+                .collect(),
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QueryArgs {
+    account_id: String,
+    #[serde(default)]
+    filter: Option<QueryFilter>,
+    #[serde(default)]
+    position: Option<i64>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QueryFilter {
+    #[serde(default)]
+    in_mailbox: Option<String>,
+}
+
+async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: QueryArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let position = args.position.unwrap_or(0).max(0) as usize;
+    let limit = args.limit.unwrap_or(50).min(500);
+    let in_mailbox = args.filter.and_then(|f| f.in_mailbox);
+
+    let (ids, total, state) = ctx
+        .storage
+        .query_emails(account_id, in_mailbox, position, limit)
+        .await
+        .map_err(storage_err)?;
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "queryState": state.to_string(),
+        "canCalculateChanges": false,
+        "position": position,
+        "ids": ids,
+        "total": total,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangesArgs {
+    account_id: String,
+    since_state: String,
+    #[serde(default)]
+    max_changes: Option<usize>,
+}
+
+async fn changes(
+    args: Value,
+    ctx: Arc<JmapCtx>,
+    data_type: DataType,
+) -> Result<Value, MethodError> {
+    let args: ChangesArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+    let since: u64 = args
+        .since_state
+        .parse()
+        .map_err(|_| MethodError::CannotCalculateChanges)?;
+
+    let result = ctx
+        .storage
+        .changes_since(
+            account_id,
+            data_type,
+            since,
+            args.max_changes.unwrap_or(256),
+        )
+        .await
+        .map_err(storage_err)?;
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "oldState": args.since_state,
+        "newState": result.new_state.to_string(),
+        "hasMoreChanges": result.has_more,
+        "created": result.created,
+        "updated": result.updated,
+        "destroyed": [],
+    }))
+}
+
+async fn thread_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+    let ids = args
+        .ids
+        .as_ref()
+        .ok_or_else(|| MethodError::InvalidArguments("Thread/get requires ids".into()))?;
+    let thread_ids: Vec<ms_core::ThreadId> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+
+    let threads = ctx
+        .storage
+        .thread_emails(account_id, thread_ids)
+        .await
+        .map_err(storage_err)?;
+    let state = ctx
+        .storage
+        .state(account_id, DataType::Thread)
+        .await
+        .map_err(storage_err)?;
+
+    let list: Vec<Value> = threads
+        .iter()
+        .map(|(id, email_ids)| json!({"id": id, "emailIds": email_ids}))
+        .collect();
+    let not_found: Vec<&String> = ids
+        .iter()
+        .filter(|id| !threads.iter().any(|(t, _)| &t == id))
+        .collect();
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "state": state.to_string(),
+        "list": list,
+        "notFound": not_found,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetArgs {
+    account_id: String,
+    #[serde(default)]
+    create: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    update: Option<serde_json::Map<String, Value>>,
+}
+
+/// Email/set supporting updates only (keywords, mailboxIds) — flag, mark
+/// read, move, archive. Create (drafts) and destroy arrive with submission.
+async fn email_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: SetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let old_state = ctx
+        .storage
+        .state(account_id, DataType::Email)
+        .await
+        .map_err(storage_err)?;
+
+    let mut updated = serde_json::Map::new();
+    let mut not_updated = serde_json::Map::new();
+    let mut created = serde_json::Map::new();
+    let mut not_created = serde_json::Map::new();
+
+    for (client_id, object) in args.create.unwrap_or_default() {
+        match apply_create(&ctx, account_id, &object).await {
+            Ok(server_ids) => {
+                created.insert(client_id, server_ids);
+            }
+            Err(description) => {
+                not_created.insert(
+                    client_id,
+                    json!({"type": "invalidProperties", "description": description}),
+                );
+            }
+        }
+    }
+
+    for (id, patch) in args.update.unwrap_or_default() {
+        match apply_update(&ctx, account_id, &id, &patch).await {
+            Ok(()) => {
+                updated.insert(id, Value::Null);
+            }
+            Err(description) => {
+                not_updated.insert(
+                    id,
+                    json!({"type": "invalidProperties", "description": description}),
+                );
+            }
+        }
+    }
+
+    let new_state = ctx
+        .storage
+        .state(account_id, DataType::Email)
+        .await
+        .map_err(storage_err)?;
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "oldState": old_state.to_string(),
+        "newState": new_state.to_string(),
+        "updated": updated,
+        "notUpdated": not_updated,
+        "created": created,
+        "notCreated": not_created,
+        "destroyed": [],
+    }))
+}
+
+/// Email/set create: compose an RFC 5322 message from the JMAP Email object
+/// (drafts are the primary use) and ingest it into the requested mailbox.
+async fn apply_create(
+    ctx: &JmapCtx,
+    account_id: ms_core::AccountId,
+    object: &Value,
+) -> Result<Value, String> {
+    let mailbox_ids: Vec<String> = object
+        .get("mailboxIds")
+        .and_then(Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
+    let first_mailbox: ms_core::MailboxId = mailbox_ids
+        .first()
+        .ok_or("mailboxIds is required")?
+        .parse()
+        .map_err(|_| "bad mailbox id".to_owned())?;
+
+    let raw = compose_from_jmap(&ctx.account, object)?;
+    let ingested = ctx
+        .storage
+        .ingest_email_into(
+            account_id,
+            raw,
+            ms_storage::MailboxTarget::Id(first_mailbox),
+            None,
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+
+    // Keywords (e.g. $draft, $seen) apply after the row exists.
+    if let Some(keywords) = object.get("keywords").and_then(Value::as_object) {
+        let keywords: Vec<String> = keywords.keys().cloned().collect();
+        ctx.storage
+            .update_email(account_id, ingested.id, Some(keywords), None)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+
+    Ok(json!({
+        "id": ingested.id.to_string(),
+        "blobId": ingested.blob_id.to_hex(),
+        "threadId": ingested.thread_id.to_string(),
+    }))
+}
+
+/// Build RFC 5322 bytes from a (pragmatic subset of a) JMAP Email object.
+fn compose_from_jmap(account: &ms_storage::Account, object: &Value) -> Result<Vec<u8>, String> {
+    fn address_list(value: Option<&Value>) -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(|entry| {
+                        let email = entry.get("email")?.as_str()?;
+                        match entry.get("name").and_then(Value::as_str) {
+                            Some(name) if !name.is_empty() => Some(format!("{name} <{email}>")),
+                            _ => Some(format!("<{email}>")),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    let from = {
+        let provided = address_list(object.get("from"));
+        if provided.is_empty() {
+            match &account.display_name {
+                Some(name) => format!("{name} <{}>", account.email),
+                None => format!("<{}>", account.email),
+            }
+        } else {
+            provided.join(", ")
+        }
+    };
+    let to = address_list(object.get("to"));
+    let cc = address_list(object.get("cc"));
+    let subject = object
+        .get("subject")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    // Body: first textBody part's value from bodyValues.
+    let body = object
+        .get("textBody")
+        .and_then(Value::as_array)
+        .and_then(|parts| parts.first())
+        .and_then(|part| part.get("partId"))
+        .and_then(Value::as_str)
+        .and_then(|part_id| {
+            object
+                .get("bodyValues")?
+                .get(part_id)?
+                .get("value")?
+                .as_str()
+        })
+        .unwrap_or_default()
+        .replace('\n', "\r\n");
+
+    let domain = account
+        .email
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .unwrap_or("local");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut headers = format!(
+        "From: {from}\r\nSubject: {subject}\r\nDate: {date}\r\n\
+         Message-ID: <{id}@{domain}>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n",
+        date = ms_core::time::rfc2822_utc(now),
+        id = uuid::Uuid::now_v7(),
+    );
+    if !to.is_empty() {
+        headers.push_str(&format!("To: {}\r\n", to.join(", ")));
+    }
+    if !cc.is_empty() {
+        headers.push_str(&format!("Cc: {}\r\n", cc.join(", ")));
+    }
+    Ok(format!("{headers}\r\n{body}").into_bytes())
+}
+
+/// Identity/get: one identity per account (RFC 8621 §6).
+async fn identity_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = parse(args)?;
+    check_account(&ctx, &args.account_id)?;
+    Ok(json!({
+        "accountId": args.account_id,
+        "state": "0",
+        "list": [{
+            "id": "default",
+            "name": ctx.account.display_name.clone().unwrap_or_else(|| ctx.account.email.clone()),
+            "email": ctx.account.email,
+            "replyTo": null,
+            "bcc": null,
+            "textSignature": "",
+            "htmlSignature": "",
+            "mayDelete": false,
+        }],
+        "notFound": [],
+    }))
+}
+
+/// EmailSubmission/set: hand a stored message to the outbound pipeline.
+async fn submission_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: SetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+    let submitter = ctx
+        .submitter
+        .clone()
+        .ok_or_else(|| MethodError::ServerFail("submission is not enabled".into()))?;
+
+    let mut created = serde_json::Map::new();
+    let mut not_created = serde_json::Map::new();
+
+    for (client_id, object) in args.create.unwrap_or_default() {
+        let result: Result<Value, String> = async {
+            let email_id: ms_core::EmailId = object
+                .get("emailId")
+                .and_then(Value::as_str)
+                .ok_or("emailId is required")?
+                .parse()
+                .map_err(|_| "bad emailId".to_owned())?;
+
+            let rows = ctx
+                .storage
+                .emails_by_ids(account_id, vec![email_id])
+                .await
+                .map_err(|err| err.to_string())?;
+            let row = rows.first().ok_or("no such email")?;
+            let blob_id: ms_core::BlobId =
+                row.blob_id.parse().map_err(|_| "bad blob".to_owned())?;
+            let raw = ctx
+                .storage
+                .get_blob(blob_id)
+                .await
+                .map_err(|err| err.to_string())?;
+
+            // Envelope: explicit, or derived from the message headers.
+            let (mail_from, recipients) = match object.get("envelope") {
+                Some(envelope) => {
+                    let mail_from = envelope
+                        .get("mailFrom")
+                        .and_then(|m| m.get("email"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(&ctx.account.email)
+                        .to_owned();
+                    let recipients: Vec<String> = envelope
+                        .get("rcptTo")
+                        .and_then(Value::as_array)
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|r| r.get("email")?.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (mail_from, recipients)
+                }
+                None => {
+                    let recipients = recipients_from_raw(&raw);
+                    (ctx.account.email.clone(), recipients)
+                }
+            };
+            if recipients.is_empty() {
+                return Err("no recipients".to_owned());
+            }
+
+            let queued = submitter
+                .submit(account_id, mail_from, recipients, raw)
+                .await?;
+            Ok(json!({
+                "id": queued.first().map(|id| id.to_string()).unwrap_or_default(),
+                "undoStatus": "final",
+            }))
+        }
+        .await;
+
+        match result {
+            Ok(value) => {
+                created.insert(client_id, value);
+            }
+            Err(description) => {
+                not_created.insert(
+                    client_id,
+                    json!({"type": "invalidProperties", "description": description}),
+                );
+            }
+        }
+    }
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "oldState": "0",
+        "newState": "0",
+        "created": created,
+        "notCreated": not_created,
+        "updated": {},
+        "destroyed": [],
+    }))
+}
+
+/// All To/Cc/Bcc addresses from a raw message.
+fn recipients_from_raw(raw: &[u8]) -> Vec<String> {
+    let Some(message) = mail_parser::MessageParser::default().parse(raw) else {
+        return Vec::new();
+    };
+    let mut recipients = Vec::new();
+    for addresses in [message.to(), message.cc(), message.bcc()]
+        .into_iter()
+        .flatten()
+    {
+        for addr in addresses.iter() {
+            if let Some(email) = addr.address() {
+                recipients.push(email.to_owned());
+            }
+        }
+    }
+    recipients
+}
+
+async fn apply_update(
+    ctx: &JmapCtx,
+    account_id: ms_core::AccountId,
+    id: &str,
+    patch: &Value,
+) -> Result<(), String> {
+    let email_id: ms_core::EmailId = id.parse().map_err(|_| format!("bad id {id}"))?;
+    let Value::Object(patch) = patch else {
+        return Err("patch must be an object".into());
+    };
+
+    // Load current keywords/mailboxes so `keywords/$seen` style patches apply
+    // on top of existing state.
+    let rows = ctx
+        .storage
+        .emails_by_ids(account_id, vec![email_id])
+        .await
+        .map_err(|err| err.to_string())?;
+    let row = rows.first().ok_or_else(|| format!("no email {id}"))?;
+
+    let mut keywords: Option<Vec<String>> = None;
+    let mut mailbox_ids: Option<Vec<String>> = None;
+
+    for (key, value) in patch {
+        if key == "keywords" {
+            let Value::Object(map) = value else {
+                return Err("keywords must be an object".into());
+            };
+            keywords = Some(map.keys().cloned().collect());
+        } else if let Some(keyword) = key.strip_prefix("keywords/") {
+            let mut current = keywords.take().unwrap_or_else(|| row.keywords.clone());
+            let keyword = keyword.to_lowercase();
+            match value {
+                Value::Bool(true) => {
+                    if !current.contains(&keyword) {
+                        current.push(keyword);
+                    }
+                }
+                Value::Bool(false) | Value::Null => current.retain(|k| k != &keyword),
+                _ => return Err(format!("bad value for {key}")),
+            }
+            keywords = Some(current);
+        } else if key == "mailboxIds" {
+            let Value::Object(map) = value else {
+                return Err("mailboxIds must be an object".into());
+            };
+            mailbox_ids = Some(map.keys().cloned().collect());
+        } else if let Some(mailbox) = key.strip_prefix("mailboxIds/") {
+            let mut current = mailbox_ids
+                .take()
+                .unwrap_or_else(|| row.mailbox_ids.clone());
+            match value {
+                Value::Bool(true) => {
+                    if !current.iter().any(|m| m == mailbox) {
+                        current.push(mailbox.to_owned());
+                    }
+                }
+                Value::Bool(false) | Value::Null => current.retain(|m| m != mailbox),
+                _ => return Err(format!("bad value for {key}")),
+            }
+            mailbox_ids = Some(current);
+        } else {
+            return Err(format!("unsupported property {key}"));
+        }
+    }
+
+    let mailbox_ids = match mailbox_ids {
+        Some(ids) => Some(
+            ids.iter()
+                .map(|id| id.parse().map_err(|_| format!("bad mailbox id {id}")))
+                .collect::<Result<Vec<ms_core::MailboxId>, String>>()?,
+        ),
+        None => None,
+    };
+
+    ctx.storage
+        .update_email(account_id, email_id, keywords, mailbox_ids)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, MethodError> {
+    serde_json::from_value(args).map_err(|err| MethodError::InvalidArguments(err.to_string()))
+}

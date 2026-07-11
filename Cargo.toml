@@ -1,0 +1,88 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "bin/mailserverd"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+rust-version = "1.97"
+authors = ["Travis Johnson <travisj@gmail.com>"]
+
+[workspace.dependencies]
+# internal crates
+ms-ai = { path = "crates/ms-ai" }
+jmap-core = { path = "crates/jmap-core" }
+ms-api = { path = "crates/ms-api" }
+ms-authn = { path = "crates/ms-authn" }
+ms-core = { path = "crates/ms-core" }
+ms-delivery = { path = "crates/ms-delivery" }
+ms-events = { path = "crates/ms-events" }
+ms-jmap-mail = { path = "crates/ms-jmap-mail" }
+ms-mcp = { path = "crates/ms-mcp" }
+ms-pgp = { path = "crates/ms-pgp" }
+ms-setup = { path = "crates/ms-setup" }
+ms-smtp-in = { path = "crates/ms-smtp-in" }
+ms-storage = { path = "crates/ms-storage" }
+
+# async runtime & observability
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# serialization & config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1.1"
+
+# errors
+thiserror = "2.0"
+anyhow = "1.0"
+
+# mail protocols & formats (Stalwart's permissive crates — keep behind internal traits)
+mail-auth = { version = "0.11", default-features = false, features = ["ring", "dns-hickory", "arc", "generate", "report"] }
+mail-send = { version = "0.6", default-features = false, features = ["ring", "dkim"] }
+hickory-resolver = "0.26"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
+rsa = "0.9"
+sequoia-openpgp = { version = "2.4", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto", "compression"] }
+mail-parser = "0.11"
+smtp-proto = "0.2"
+
+axum = { version = "0.8", features = ["ws"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# tls
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2.2"
+rcgen = "0.14"
+
+# storage & crypto
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+chacha20poly1305 = "0.11"
+blake3 = "1.8"
+getrandom = "0.3"
+
+# ids
+uuid = { version = "1.23", features = ["v7", "serde"] }
+
+# cli
+clap = { version = "4.6", features = ["derive"] }
+
+# test
+tempfile = "3.27"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

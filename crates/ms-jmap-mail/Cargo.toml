@@ -1,0 +1,27 @@
+[package]
+name = "ms-jmap-mail"
+description = "RFC 8621 mail data types (Mailbox/Email/Thread) bound to ms-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+jmap-core = { workspace = true }
+ms-api = { workspace = true }
+ms-core = { workspace = true }
+ms-storage = { workspace = true }
+mail-parser = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+ms-events = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

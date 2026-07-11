@@ -1,0 +1,18 @@
+[package]
+name = "ms-setup"
+description = "Self-hosting onboarding: DNS record generation, verification polling, and health checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+ms-core = { workspace = true }
+hickory-resolver = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

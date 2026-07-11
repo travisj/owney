@@ -1,0 +1,22 @@
+[package]
+name = "jmap-core"
+description = "A clean-room, framework-agnostic JMAP server core (RFC 8620): request envelope, method dispatch, result references, session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+# Intended for standalone publication once the API settles (no JMAP server
+# library exists on crates.io as of 2026). Keep this crate free of
+# workspace-internal dependencies.
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

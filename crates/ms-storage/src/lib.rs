@@ -1,0 +1,374 @@
+//! Persistence for the whole server: SQLite (JMAP-shaped schema) plus the
+//! encrypted blob store, unified behind `Storage`.
+//!
+//! The one rule everything else relies on: **all mutations go through this
+//! crate, and every mutation bumps the per-account modseq for the data types
+//! it touched and publishes a `StateChange` event after commit.** JMAP
+//! `/changes`, push, and client realtime sync are all derived from that.
+
+mod ai_store;
+mod blob;
+mod db;
+mod error;
+mod ingest;
+mod keys;
+mod mail_queries;
+mod migrations;
+mod pgp_store;
+mod queue;
+mod tokens;
+
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use ms_core::{AccountId, BlobId, DataType, MailboxId, ModSeq};
+use ms_events::{Event, EventBus};
+use rusqlite::{Connection, OptionalExtension, params};
+
+pub use ai_store::AiAction;
+pub use blob::BlobStore;
+pub use db::Db;
+pub use error::StorageError;
+pub use ingest::{EmailSummary, IngestedEmail, MailboxTarget};
+pub use keys::{MASTER_KEY_FILE, MasterKey};
+pub use mail_queries::{ChangesResult, EmailRow, MailboxRow};
+pub use pgp_store::PgpPeer;
+pub use queue::{AttemptOutcome, QueueItem};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    pub id: AccountId,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug)]
+pub struct Storage {
+    pub(crate) db: Db,
+    blobs: BlobStore,
+    pub(crate) events: EventBus,
+    data_dir: PathBuf,
+}
+
+impl Storage {
+    /// Open (creating on first run) the data directory: master key, database,
+    /// and blob store.
+    pub fn open(data_dir: &Path, events: EventBus) -> Result<Self, StorageError> {
+        std::fs::create_dir_all(data_dir).map_err(|source| StorageError::io(data_dir, source))?;
+        let master = MasterKey::load_or_create(&data_dir.join(MASTER_KEY_FILE))?;
+        let blobs = BlobStore::open(data_dir.join("blobs"), master)?;
+        let db = Db::open(&data_dir.join("mail.db"))?;
+        Ok(Self {
+            db,
+            blobs,
+            events,
+            data_dir: data_dir.to_owned(),
+        })
+    }
+
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Create an account with its default mailbox set.
+    pub async fn create_account(
+        &self,
+        email: &str,
+        display_name: Option<&str>,
+    ) -> Result<Account, StorageError> {
+        let email = email.trim().to_lowercase();
+        let display_name = display_name.map(str::to_owned);
+        let account_id = AccountId::new();
+
+        let changed = self
+            .db
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let created_at = unix_now();
+                tx.execute(
+                    "INSERT INTO accounts (id, email, display_name, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![account_id.to_string(), email, display_name, created_at],
+                )?;
+
+                let modseq = bump(&tx, account_id, DataType::Mailbox)?;
+                for (name, role, sort_order) in DEFAULT_MAILBOXES {
+                    tx.execute(
+                        "INSERT INTO mailboxes
+                           (id, account_id, name, role, sort_order,
+                            created_modseq, updated_modseq)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                        params![
+                            MailboxId::new().to_string(),
+                            account_id.to_string(),
+                            name,
+                            role,
+                            sort_order,
+                            modseq.0 as i64,
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(vec![(DataType::Mailbox, modseq)])
+            })
+            .await?;
+
+        self.events.publish(Event::StateChange {
+            account_id,
+            changed,
+        });
+        self.account(account_id)
+            .await?
+            .ok_or(StorageError::AccountNotFound)
+    }
+
+    pub async fn account(&self, id: AccountId) -> Result<Option<Account>, StorageError> {
+        self.db
+            .call(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, email, display_name, created_at
+                         FROM accounts WHERE id = ?1",
+                        [id.to_string()],
+                        row_to_account,
+                    )
+                    .optional()?)
+            })
+            .await
+    }
+
+    pub async fn account_by_email(&self, email: &str) -> Result<Option<Account>, StorageError> {
+        let email = email.trim().to_lowercase();
+        self.db
+            .call(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, email, display_name, created_at
+                         FROM accounts WHERE email = ?1",
+                        [email],
+                        row_to_account,
+                    )
+                    .optional()?)
+            })
+            .await
+    }
+
+    pub async fn accounts(&self) -> Result<Vec<Account>, StorageError> {
+        self.db
+            .call(|conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, email, display_name, created_at
+                     FROM accounts ORDER BY created_at",
+                )?;
+                let accounts = stmt
+                    .query_map([], row_to_account)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(accounts)
+            })
+            .await
+    }
+
+    /// Current modseq for one data type of an account (zero if never bumped).
+    pub async fn state(
+        &self,
+        account_id: AccountId,
+        data_type: DataType,
+    ) -> Result<ModSeq, StorageError> {
+        self.db
+            .call(move |conn| {
+                let modseq: Option<i64> = conn
+                    .query_row(
+                        "SELECT modseq FROM states WHERE account_id = ?1 AND data_type = ?2",
+                        params![account_id.to_string(), data_type.as_str()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                Ok(ModSeq(modseq.unwrap_or(0) as u64))
+            })
+            .await
+    }
+
+    /// Store a blob (encrypted, content-addressed) and record it in the
+    /// database. Refcounts are managed by the rows that link to it.
+    pub async fn put_blob(&self, plaintext: Vec<u8>) -> Result<BlobId, StorageError> {
+        let blobs = self.blobs.clone();
+        let size = plaintext.len() as i64;
+        let id = tokio::task::spawn_blocking(move || blobs.put(&plaintext))
+            .await
+            .map_err(|_| StorageError::Closed)??;
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO blobs (id, size, created_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT (id) DO NOTHING",
+                    params![id.to_hex(), size, unix_now()],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(id)
+    }
+
+    pub async fn get_blob(&self, id: BlobId) -> Result<Vec<u8>, StorageError> {
+        let blobs = self.blobs.clone();
+        tokio::task::spawn_blocking(move || blobs.get(&id))
+            .await
+            .map_err(|_| StorageError::Closed)?
+    }
+
+    /// Clean shutdown: drains pending writes and checkpoints the WAL.
+    pub fn close(self) {
+        self.db.close();
+    }
+}
+
+const DEFAULT_MAILBOXES: [(&str, &str, i64); 7] = [
+    ("Inbox", "inbox", 0),
+    ("Screener", "screener", 1),
+    ("Drafts", "drafts", 2),
+    ("Sent", "sent", 3),
+    ("Archive", "archive", 4),
+    ("Junk", "junk", 5),
+    ("Trash", "trash", 6),
+];
+
+/// Bump and return the modseq for one data type, inside the caller's
+/// transaction. Every mutation in this crate goes through here.
+pub(crate) fn bump(
+    conn: &Connection,
+    account_id: AccountId,
+    data_type: DataType,
+) -> Result<ModSeq, StorageError> {
+    let modseq: i64 = conn.query_row(
+        "INSERT INTO states (account_id, data_type, modseq) VALUES (?1, ?2, 1)
+         ON CONFLICT (account_id, data_type) DO UPDATE SET modseq = modseq + 1
+         RETURNING modseq",
+        params![account_id.to_string(), data_type.as_str()],
+        |row| row.get(0),
+    )?;
+    Ok(ModSeq(modseq as u64))
+}
+
+pub(crate) fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
+    let id: String = row.get(0)?;
+    Ok(Account {
+        id: id.parse().map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
+        })?,
+        email: row.get(1)?,
+        display_name: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
+pub(crate) fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn open(dir: &Path) -> (Storage, EventBus) {
+        let events = EventBus::new(64);
+        let storage = Storage::open(dir, events.clone()).expect("open");
+        (storage, events)
+    }
+
+    #[tokio::test]
+    async fn create_account_bumps_modseq_and_publishes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, events) = open(dir.path()).await;
+        let mut rx = events.subscribe();
+
+        let account = storage
+            .create_account("Alice@Example.com", Some("Alice"))
+            .await
+            .expect("create");
+        assert_eq!(
+            account.email, "alice@example.com",
+            "addresses normalize to lowercase"
+        );
+
+        let state = storage
+            .state(account.id, DataType::Mailbox)
+            .await
+            .expect("state");
+        assert_eq!(state, ModSeq(1));
+        assert_eq!(
+            storage
+                .state(account.id, DataType::Email)
+                .await
+                .expect("state"),
+            ModSeq(0)
+        );
+
+        let event = rx.recv().await.expect("event");
+        match &*event {
+            Event::StateChange {
+                account_id,
+                changed,
+            } => {
+                assert_eq!(*account_id, account.id);
+                assert_eq!(changed, &[(DataType::Mailbox, ModSeq(1))]);
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+
+        let found = storage
+            .account_by_email("alice@example.com")
+            .await
+            .expect("lookup");
+        assert_eq!(found.as_ref(), Some(&account));
+
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn duplicate_account_is_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = open(dir.path()).await;
+
+        storage
+            .create_account("a@example.com", None)
+            .await
+            .expect("first");
+        assert!(storage.create_account("A@example.com", None).await.is_err());
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn blob_round_trip_through_storage() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = open(dir.path()).await;
+
+        let body = b"Subject: hi\r\n\r\nbody".to_vec();
+        let id = storage.put_blob(body.clone()).await.expect("put");
+        assert_eq!(storage.get_blob(id).await.expect("get"), body);
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn reopen_preserves_data() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let account = {
+            let (storage, _events) = open(dir.path()).await;
+            let account = storage
+                .create_account("keep@example.com", None)
+                .await
+                .expect("create");
+            storage.close();
+            account
+        };
+
+        let (storage, _events) = open(dir.path()).await;
+        let found = storage.account(account.id).await.expect("lookup");
+        assert_eq!(found, Some(account));
+        storage.close();
+    }
+}
