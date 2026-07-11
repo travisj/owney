@@ -112,5 +112,13 @@ mod tests {
                 .is_none(),
             "core is not an account capability"
         );
+        assert!(value["uploadUrl"].as_str().unwrap().contains("{accountId}"));
+        assert!(value["downloadUrl"].as_str().unwrap().contains("{blobId}"));
+        assert!(
+            value["eventSourceUrl"]
+                .as_str()
+                .unwrap()
+                .contains("{types}")
+        );
     }
 }
