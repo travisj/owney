@@ -19,6 +19,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+ms-delivery = { workspace = true }
 ms-events = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

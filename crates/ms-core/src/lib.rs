@@ -13,18 +13,3 @@ pub mod time;
 pub use config::Config;
 pub use error::ConfigError;
 pub use id::{AccountId, BlobId, DataType, EmailId, MailboxId, ModSeq, ThreadId};
-
-/// Firewall trait: hand a composed message to the outbound pipeline.
-/// Implemented by ms-delivery; consumed by the JMAP/REST/MCP surfaces so they
-/// never depend on delivery internals.
-pub trait Submitter: Send + Sync {
-    /// Sign, store the Sent copy, and enqueue for each recipient. Returns the
-    /// queue ids.
-    fn submit(
-        &self,
-        account_id: AccountId,
-        mail_from: String,
-        recipients: Vec<String>,
-        raw: Vec<u8>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, String>> + Send + '_>>;
-}

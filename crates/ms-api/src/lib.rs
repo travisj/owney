@@ -20,7 +20,7 @@ pub struct JmapCtx {
     pub account: Account,
     pub storage: Arc<Storage>,
     /// Outbound pipeline; None in read-only deployments and some tests.
-    pub submitter: Option<Arc<dyn ms_core::Submitter>>,
+    pub submitter: Option<Arc<dyn ms_delivery::Submitter>>,
 }
 
 impl std::fmt::Debug for JmapCtx {
@@ -35,7 +35,7 @@ pub struct ApiState {
     pub dispatcher: Dispatcher<JmapCtx>,
     pub storage: Arc<Storage>,
     pub events: ms_events::EventBus,
-    pub submitter: Option<Arc<dyn ms_core::Submitter>>,
+    pub submitter: Option<Arc<dyn ms_delivery::Submitter>>,
     /// Base URL clients reach us at, e.g. `https://mail.example.com`.
     pub public_url: String,
 }
