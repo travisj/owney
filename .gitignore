@@ -2,3 +2,4 @@
 *.local.toml
 /data
 .DS_Store
+/.worktrees/
