@@ -1,4 +1,16 @@
 //! The JMAP session object (RFC 8620 §2), served at `/.well-known/jmap`.
+//!
+//! [`Session`] is what clients `GET` to discover a server's
+//! capabilities, accounts, and URLs. [`Session::for_account`] builds
+//! the single-account shape; servers that support more than one
+//! account build [`Session`] directly. URL templates use
+//! `{placeholder}` syntax that the client fills in (e.g. `{accountId}`,
+//! `{blobId}`, `{name}`); see RFC 8620 §2 for the complete list.
+//!
+//! [`SessionAccount`] describes one account and the per-account
+//! capabilities it advertises. By convention the core capability
+//! (`urn:ietf:params:jmap:core`) does NOT appear in
+//! `accountCapabilities` — every account implicitly supports it.
 
 use std::collections::BTreeMap;
 

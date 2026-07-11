@@ -147,6 +147,10 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
         &self.limits
     }
 
+    pub fn set_session_state(&mut self, state: impl Into<String>) {
+        self.session_state = state.into();
+    }
+
     /// Declare a capability (e.g. `urn:ietf:params:jmap:mail`) and its
     /// session capability object.
     pub fn add_capability(&mut self, urn: impl Into<String>, object: Value) {
@@ -158,10 +162,38 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
     }
 
     /// Register a method handler under a slash-namespaced name (`"Mailbox/get"`,
-    /// `"Email/set"`). The capability URN is automatically declared in the
-    /// session as an empty object if it has not been declared before; pass
-    /// the capability object itself via `add_capability` *before* calling
-    /// `register` if you want it to advertise properties to clients.
+    /// `"Email/set"`).
+    ///
+    /// The capability URN is automatically declared in the session (as an
+    /// empty object) if it has not been declared before. Call
+    /// [`Dispatcher::add_capability`] *before* `register` if you want the
+    /// session capability object to advertise properties to clients.
+    ///
+    /// The handler receives the call's `arguments` [`Value`] (after all
+    /// `#key` result references have been resolved by the dispatcher) and
+    /// an [`Arc<Ctx>`] shared with the rest of the request.
+    ///
+    /// # Result-reference resolution
+    ///
+    /// Per RFC 8620 §3.7, the dispatcher replaces any `#foo` argument
+    /// with the value extracted from the prior response matching
+    /// `#foo.resultOf` × `#foo.path`. The handler sees the *resolved*
+    /// arguments — it does not see `#foo` itself.
+    ///
+    /// # Cancellation safety
+    ///
+    /// The handler future may be cancelled by the dispatcher if a
+    /// per-call timeout (see [`Limits::max_call_duration`]) elapses, or
+    /// if the whole request is dropped. Handlers that hold locks or
+    /// external resources must arrange to release them on cancellation
+    /// (typically by holding them inside an RAII guard yielded by the
+    /// future, not by side-effects of `.await`).
+    ///
+    /// # Panic safety
+    ///
+    /// A panic inside the handler is caught by the dispatcher and
+    /// surfaced to the client as `MethodError::ServerFail`. Subsequent
+    /// method calls in the same request still run.
     pub fn register<F, Fut>(
         &mut self,
         method: impl Into<String>,
@@ -590,5 +622,16 @@ mod tests {
         let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
         dispatcher.register("Foo/get", "urn:example:auto", |_a, _c| async { Ok(json!({})) });
         assert!(dispatcher.capabilities().contains_key("urn:example:auto"));
+    }
+
+    #[tokio::test]
+    async fn session_state_can_be_bumped() {
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        dispatcher.set_session_state("s1");
+        let response = dispatcher.process(
+            request(json!({"using": [CORE_CAPABILITY], "methodCalls": [["Core/echo", {}, "c1"]]})),
+            Arc::new(()),
+        ).await.expect("process");
+        assert_eq!(response.session_state, "s1");
     }
 }
