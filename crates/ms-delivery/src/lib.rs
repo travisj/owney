@@ -15,7 +15,9 @@ pub mod router;
 mod worker;
 
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::future::Future;
 
 use ms_events::EventBus;
 use ms_storage::Storage;
@@ -24,6 +26,29 @@ use tokio::sync::Notify;
 pub use dkim::DkimKeys;
 pub use router::{AnyRouter, MxRouter, Relay, Router, StaticRouter};
 pub use worker::spawn_worker;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SubmitError {
+    #[error("transport failure: {0}")]
+    Transport(String),
+    #[error("refused: {0}")]
+    Refused(String),
+}
+
+/// Firewall trait: hand a composed message to the outbound pipeline.
+/// Implemented by ms-delivery; consumed by the JMAP/REST/MCP surfaces so they
+/// never depend on delivery internals.
+pub trait Submitter: Send + Sync + 'static {
+    /// Sign, store the Sent copy, and enqueue for each recipient. Returns the
+    /// queue ids.
+    fn submit(
+        &self,
+        account_id: ms_core::AccountId,
+        mail_from: String,
+        recipients: Vec<String>,
+        raw: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>>;
+}
 
 /// Retry schedule in seconds after attempt N (RFC 5321-ish, ≤ ~48h total).
 pub const BACKOFF: [i64; 9] = [60, 300, 1800, 7200, 14400, 14400, 28800, 43200, 61200];
@@ -122,18 +147,63 @@ impl<R: Router> DeliveryService<R> {
     }
 }
 
-impl<R: Router> ms_core::Submitter for DeliveryService<R> {
+impl<R: Router> Submitter for DeliveryService<R> {
     fn submit(
         &self,
         account_id: ms_core::AccountId,
         mail_from: String,
         recipients: Vec<String>,
         raw: Vec<u8>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, String>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>> {
         Box::pin(async move {
             DeliveryService::submit(self, account_id, &mail_from, &recipients, raw)
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(|err| match err {
+                    DeliveryError::Permanent(msg) => SubmitError::Refused(msg),
+                    DeliveryError::Temporary(msg)
+                    | DeliveryError::Dkim(msg)
+                    | DeliveryError::Dns(msg) => SubmitError::Transport(msg),
+                    DeliveryError::Storage(msg) => SubmitError::Transport(msg.to_string()),
+                    DeliveryError::Io(path, _) => {
+                        SubmitError::Transport(format!("io error on {}", path.display()))
+                    }
+                })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct StubSubmitter;
+    impl Submitter for StubSubmitter {
+        fn submit(
+            &self,
+            _account_id: ms_core::AccountId,
+            _mail_from: String,
+            _recipients: Vec<String>,
+            _raw: Vec<u8>,
+        ) -> std::pin::Pin<
+            Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>,
+        > {
+            Box::pin(async { Err(SubmitError::Refused("test stub".into())) })
+        }
+    }
+
+    #[tokio::test]
+    async fn stub_returns_refused_error() {
+        let s = StubSubmitter;
+        let err = s
+            .submit(
+                ms_core::AccountId::new(),
+                "alice@example.com".into(),
+                vec![],
+                vec![],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SubmitError::Refused(_)));
     }
 }

@@ -647,7 +647,8 @@ async fn submission_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodE
 
             let queued = submitter
                 .submit(account_id, mail_from, recipients, raw)
-                .await?;
+                .await
+                .map_err(|err| err.to_string())?;
             Ok(json!({
                 "id": queued.first().map(|id| id.to_string()).unwrap_or_default(),
                 "undoStatus": "final",

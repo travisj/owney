@@ -48,7 +48,7 @@ impl Storage {
         let domain = recipient
             .rsplit_once('@')
             .map(|(_, domain)| domain.to_lowercase())
-            .ok_or_else(|| StorageError::Corrupt(format!("recipient {recipient} has no domain")))?;
+            .ok_or_else(|| StorageError::BadInput(format!("recipient {recipient} has no domain")))?;
         let item = QueueItem {
             id: Uuid::now_v7(),
             account_id,

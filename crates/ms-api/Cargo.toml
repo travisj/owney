@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 jmap-core = { workspace = true }
 ms-core = { workspace = true }
+ms-delivery = { workspace = true }
 ms-events = { workspace = true }
 ms-mcp = { workspace = true }
 ms-pgp = { workspace = true }

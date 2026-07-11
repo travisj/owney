@@ -474,7 +474,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         dispatcher,
         storage: storage.clone(),
         events: events.clone(),
-        submitter: Some(delivery.clone() as Arc<dyn ms_core::Submitter>),
+        submitter: Some(delivery.clone() as Arc<dyn ms_delivery::Submitter>),
         public_url,
     });
     let api_listener = tokio::net::TcpListener::bind(&config.api.listen)

@@ -80,14 +80,16 @@ struct MockSubmitter {
     submitted: Submitted,
 }
 
-impl ms_core::Submitter for MockSubmitter {
+impl ms_delivery::Submitter for MockSubmitter {
     fn submit(
         &self,
         _account_id: ms_core::AccountId,
         mail_from: String,
         recipients: Vec<String>,
         _raw: Vec<u8>,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, String>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<Vec<uuid::Uuid>, ms_delivery::SubmitError>> + Send + '_>,
+    > {
         self.submitted
             .lock()
             .expect("lock")

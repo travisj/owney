@@ -218,6 +218,15 @@ impl Storage {
                     "submission changes not tracked yet".into(),
                 ));
             }
+            // `DataType` is `#[non_exhaustive]`, so new variants added by
+            // future protocol work (e.g. per-identity `Identity`) fall here
+            // and produce a clear error at the storage layer rather than
+            // panicking on a missing arm.
+            _ => {
+                return Err(StorageError::Corrupt(format!(
+                    "changes_since not implemented for {data_type}"
+                )));
+            }
         };
         self.db
             .call(move |conn| {

@@ -14,7 +14,7 @@ pub struct McpCtx {
     pub account_id: AccountId,
     pub account_email: String,
     pub storage: Arc<Storage>,
-    pub submitter: Option<Arc<dyn ms_core::Submitter>>,
+    pub submitter: Option<Arc<dyn ms_delivery::Submitter>>,
     /// Whether this token is allowed to send mail.
     pub may_send: bool,
 }
@@ -285,7 +285,10 @@ impl McpCtx {
                 raw,
             )
             .await
-            .map_err(ServiceError::Invalid)?;
+            .map_err(|err| match err {
+                ms_delivery::SubmitError::Refused(msg) => ServiceError::Forbidden(msg),
+                ms_delivery::SubmitError::Transport(msg) => ServiceError::Invalid(msg),
+            })?;
         Ok(json!({"queued": queued.len()}))
     }
 

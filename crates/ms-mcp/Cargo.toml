@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 ms-ai = { workspace = true }
 ms-core = { workspace = true }
+ms-delivery = { workspace = true }
 ms-storage = { workspace = true }
 mail-parser = { workspace = true }
 serde = { workspace = true }

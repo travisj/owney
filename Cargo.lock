@@ -2346,6 +2346,7 @@ dependencies = [
  "http-body-util",
  "jmap-core",
  "ms-core",
+ "ms-delivery",
  "ms-events",
  "ms-mcp",
  "ms-pgp",
@@ -2375,6 +2376,8 @@ name = "ms-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "toml",
  "uuid",
@@ -2422,6 +2425,7 @@ dependencies = [
  "mail-parser",
  "ms-api",
  "ms-core",
+ "ms-delivery",
  "ms-events",
  "ms-storage",
  "serde",
@@ -2439,6 +2443,7 @@ dependencies = [
  "mail-parser",
  "ms-ai",
  "ms-core",
+ "ms-delivery",
  "ms-events",
  "ms-storage",
  "serde",
