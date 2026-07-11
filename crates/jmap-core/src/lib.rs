@@ -200,7 +200,7 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
 
         Ok(Response {
             method_responses: responses,
-            created_ids: None,
+            created_ids: request.created_ids.clone(),
             session_state: self.session_state.clone(),
         })
     }
@@ -440,5 +440,39 @@ mod tests {
         assert_eq!(response.method_responses[0].name(), "Thing/crash");
         // (A separate test in Phase 3 will replace this with a
         // MethodError::ServerFail expectation.)
+    }
+
+    #[tokio::test]
+    async fn client_provided_created_ids_are_echoed() {
+        let dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [["Core/echo", {}, "c1"]],
+                    "createdIds": {"c1": "u1"},
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        let echo = response.created_ids.expect("created_ids echoed");
+        assert_eq!(echo["c1"], "u1");
+    }
+
+    #[tokio::test]
+    async fn absent_client_created_ids_yields_none() {
+        let dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [["Core/echo", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        assert!(response.created_ids.is_none());
     }
 }
