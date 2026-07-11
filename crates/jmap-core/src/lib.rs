@@ -377,4 +377,29 @@ mod tests {
             .expect_err("limit");
         assert!(matches!(err, RequestError::Limit("maxCallsInRequest")));
     }
+
+    #[tokio::test]
+    async fn non_panicking_handler_runs_normally() {
+        // Today a registered handler that does not panic returns its value to
+        // the caller unchanged. Phase 3 will layer panic containment on top of
+        // this path; this test locks the current behavior so that change can
+        // be evaluated against a known baseline.
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        dispatcher.register("Thing/crash", CORE_CAPABILITY, |_args, _ctx| async {
+            Ok(json!({}))
+        });
+        let response = dispatcher
+            .process(
+                request(json!({
+                    "using": [CORE_CAPABILITY],
+                    "methodCalls": [["Thing/crash", {}, "c1"]],
+                })),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
+        assert_eq!(response.method_responses[0].name(), "Thing/crash");
+        // (A separate test in Phase 3 will replace this with a
+        // MethodError::ServerFail expectation.)
+    }
 }
