@@ -157,8 +157,11 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
         &self.capabilities
     }
 
-    /// Register a method handler. The capability must be declared (or be the
-    /// core capability) before processing requests that use it.
+    /// Register a method handler under a slash-namespaced name (`"Mailbox/get"`,
+    /// `"Email/set"`). The capability URN is automatically declared in the
+    /// session as an empty object if it has not been declared before; pass
+    /// the capability object itself via `add_capability` *before* calling
+    /// `register` if you want it to advertise properties to clients.
     pub fn register<F, Fut>(
         &mut self,
         method: impl Into<String>,
@@ -168,9 +171,14 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
         F: Fn(Value, Arc<Ctx>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Value, MethodError>> + Send + 'static,
     {
+        let cap: String = capability.into();
+        if cap != CORE_CAPABILITY {
+            self.capabilities
+                .entry(cap.clone())
+                .or_insert(Value::Object(Default::default()));
+        }
         let boxed: BoxedHandler<Ctx> = Box::new(move |args, ctx| Box::pin(handler(args, ctx)));
-        self.methods
-            .insert(method.into(), (capability.into(), boxed));
+        self.methods.insert(method.into(), (cap, boxed));
     }
 
     /// Process one JMAP request to completion.
@@ -575,5 +583,12 @@ mod tests {
             .await
             .expect("process");
         assert!(response.created_ids.is_none());
+    }
+
+    #[tokio::test]
+    async fn register_auto_declares_capability() {
+        let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
+        dispatcher.register("Foo/get", "urn:example:auto", |_a, _c| async { Ok(json!({})) });
+        assert!(dispatcher.capabilities().contains_key("urn:example:auto"));
     }
 }
