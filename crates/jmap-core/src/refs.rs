@@ -181,4 +181,24 @@ mod tests {
             Err(MethodError::InvalidResultReference(_))
         ));
     }
+
+    #[test]
+    fn json_pointer_escapes() {
+        let prior = vec![Invocation(
+            "Foo/get".to_owned(),
+            json!({"data": {"a/b": 1, "c~d": 2}}),
+            "c0".to_owned(),
+        )];
+        let args = json!({
+            "#v": {"resultOf": "c0", "name": "Foo/get", "path": "/data/a~1b"},
+        });
+        let resolved = resolve_references(args, &prior).expect("resolve");
+        assert_eq!(resolved["v"], json!(1));
+
+        let args = json!({
+            "#v": {"resultOf": "c0", "name": "Foo/get", "path": "/data/c~0d"},
+        });
+        let resolved = resolve_references(args, &prior).expect("resolve");
+        assert_eq!(resolved["v"], json!(2));
+    }
 }
