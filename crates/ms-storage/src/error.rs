@@ -29,6 +29,9 @@ pub enum StorageError {
 
     #[error("storage is shut down")]
     Closed,
+
+    #[error("writer panicked: {0}")]
+    WriterPanicked(String),
 }
 
 impl StorageError {
