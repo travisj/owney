@@ -324,7 +324,11 @@ impl<H: MailHandler> Session<H> {
                     reply(out, "502 5.5.1 STARTTLS not available");
                 }
             }
-            Request::Auth { .. } => reply(out, "503 5.5.1 no auth on this port"),
+            // RFC 4954 §5.1: AUTH requires a usable set of credentials +
+            // channel. We don't expose AUTH on MX ports; reply 502
+            // ("not implemented") per RFC 5321's general philosophy
+            // that unimplemented commands get 5xx.
+            Request::Auth { .. } => reply(out, "502 5.5.1 command not implemented"),
             Request::Bdat { .. }
             | Request::Lhlo { .. }
             | Request::Help { .. }
