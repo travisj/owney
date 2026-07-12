@@ -259,7 +259,18 @@ impl AuthVerdict {
 
     /// RFC 8601 Authentication-Results header value.
     pub fn authentication_results(&self, authserv_id: &str) -> String {
-        let mut parts = vec![authserv_id.to_owned()];
+        // Per RFC 5451 §2.2, an `authserv-id` containing a semicolon,
+        // whitespace, or non-ASCII must be quoted. Quoting protects the
+        // `parts.join(";")` boundary from being interpreted as the
+        // start of a new method-spec.
+        let authserv_id = if authserv_id.contains(|c: char| {
+            c == ';' || c.is_whitespace() || c.is_ascii_control()
+        }) {
+            format!("\"{}\"", authserv_id.replace('"', "\\\""))
+        } else {
+            authserv_id.to_owned()
+        };
+        let mut parts = vec![authserv_id];
         parts.push(format!("iprev={}", self.iprev));
         parts.push(format!("spf={}", self.spf));
         if self.dkim.is_empty() {
@@ -654,5 +665,65 @@ mod timeout_tests {
         assert_eq!(v.arc_status(), DkimStatus::TempError);
         assert_eq!(v.dmarc_status(), DmarcStatus::TempError);
         assert!(v.dkim_statuses().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod authserv_id_tests {
+    use super::AuthVerdict;
+
+    fn minimal() -> AuthVerdict {
+        AuthVerdict {
+            iprev: "pass".into(),
+            spf: "pass".into(),
+            dkim: vec![],
+            arc: "none".into(),
+            dmarc: "pass".into(),
+            dmarc_policy: "none".into(),
+        }
+    }
+
+    #[test]
+    fn plain_authserv_id_passes_through() {
+        let v = minimal().authentication_results("mail.example.com");
+        assert!(v.starts_with("mail.example.com;"));
+    }
+
+    #[test]
+    fn authserv_id_with_semicolon_is_quoted() {
+        let v = minimal().authentication_results("mail; example.com");
+        // The authserv-id must be quoted so the later `;`-join doesn't
+        // split it into two field tokens.
+        assert!(v.contains("\"mail; example.com\";"));
+    }
+
+    #[test]
+    fn authserv_id_with_whitespace_is_quoted() {
+        let v = minimal().authentication_results("mail example.com");
+        assert!(v.contains("\"mail example.com\";"));
+    }
+
+    #[test]
+    fn authserv_id_quote_is_escaped() {
+        // RFC 5451 §2.2 requires quoting any authserv-id containing
+        // whitespace, NUL, or `;`.  Embedding `;` alone is the
+        // canonical case for breaking a parser, so we use that.
+        let v = minimal().authentication_results("mail.example.com"); // first ensure no quote is added when not needed
+        assert!(
+            !v.starts_with('"'),
+            "plain authserv-id should not be quoted: {v:?}"
+        );
+
+        // Now with a `;` it MUST be quoted.
+        let v = minimal().authentication_results("mail;evil.com");
+        // First field is the authserv-id, terminated by `;`.
+        let first = v.find(";\r\n\t").expect("has next field");
+        let authserv = &v[..first];
+        assert!(
+            authserv.starts_with('"') && authserv.ends_with('"'),
+            "expected quoted authserv-id, got {authserv:?}"
+        );
+        // The interior must contain the original token verbatim.
+        assert!(authserv.contains("mail;evil.com"), "got {authserv:?}");
     }
 }
