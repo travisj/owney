@@ -3,12 +3,12 @@
 
 set -e
 
-BINARY="${1:-./target/debug/mailserverd}"
+BINARY="${1:-./target/debug/owneyd}"
 DOMAIN="example.local"
-DATA_DIR="/tmp/mailserver-demo"
+DATA_DIR="/tmp/owney-demo"
 BACKUP_DIR="$DATA_DIR/backups"
 
-echo "=== Mailserver M6 Demo ==="
+echo "=== Owney M6 Demo ==="
 echo "Binary: $BINARY"
 echo "Domain: $DOMAIN"
 echo "Data: $DATA_DIR"
@@ -56,6 +56,6 @@ echo "✓ Backup creation"
 echo "✓ Data loss recovery"
 echo ""
 echo "Next: Deploy to production with:"
-echo "  - DNS records verified (mailserverd doctor)"
-echo "  - Binary updated safely (mailserverd update)"
+echo "  - DNS records verified (owneyd doctor)"
+echo "  - Binary updated safely (owneyd update)"
 echo "  - Health monitoring active (background doctor daemon)"

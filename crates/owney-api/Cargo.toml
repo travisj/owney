@@ -1,0 +1,30 @@
+[package]
+name = "owney-api"
+description = "HTTP layer: JMAP session/api endpoints, bearer-token auth, health"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+jmap-core = { workspace = true }
+owney-core = { workspace = true }
+owney-delivery = { workspace = true }
+owney-events = { workspace = true }
+owney-mcp = { workspace = true }
+owney-pgp = { workspace = true }
+owney-storage = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

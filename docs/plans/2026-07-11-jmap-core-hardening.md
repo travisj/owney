@@ -2,13 +2,13 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Address the architecture, correctness, and implementer-facing gaps found in the `jmap-core` crate review: spec-noncompliant path evaluation, missing `created_ids` round-trip, unvalidated capability registration, fragile handler invocation, and implementer-facing documentation gaps — phased so each phase is independently shippable and downstream consumers (`ms-jmap-mail`, `ms-api`, `mailserverd`) keep compiling.
+**Goal:** Address the architecture, correctness, and implementer-facing gaps found in the `jmap-core` crate review: spec-noncompliant path evaluation, missing `created_ids` round-trip, unvalidated capability registration, fragile handler invocation, and implementer-facing documentation gaps — phased so each phase is independently shippable and downstream consumers (`ms-jmap-mail`, `ms-api`, `owneyd`) keep compiling.
 
 **Architecture:** Phase by severity. Phase 0 fixes existing test gaps; Phase 1 isolates spec compliance bugs that affect correctness today. Phase 2 introduces a new `MethodResult` return type that lets handlers return created-id maps without breaking existing handlers (a new variant alongside the existing `Result<Value, MethodError>` path). Phase 3 hardens robustness (panic containment, timeouts, bound tightening). Phase 4 documents the embedder contract end-to-end and adds tests for the JSON-pointer escape and edge cases. Every phase ends with `cargo test`, `cargo clippy -p jmap-core --all-targets -- -D warnings`, and `cargo doc -p jmap-core --no-deps` green.
 
 **Tech Stack:** Rust 1.97, edition 2024, `serde`, `serde_json`, `thiserror`, `tokio` (dev-only). Workspace lints: `unsafe_code = forbid`, `missing_debug_implementations = warn`, `unwrap_used = warn` (allow in tests).
 
-**Compatibility rule:** The crate's public API — `Dispatcher::new`, `register`, `add_capability`, `capabilities`, `with_limits`, `limits`, `process`, `CORE_CAPABILITY`, `Limits`, `Request`, `Response`, `Invocation`, `RequestError`, `MethodError`, `Session`, `Session::for_account` — must remain source-compatible with current downstream usage in `ms-api`, `ms-jmap-mail`, `bin/mailserverd`. Phase 2 is the one exception: it adds a new return type accepted by `register`, but the existing `Fn(Value, Arc<Ctx>) -> Future<Output = Result<Value, MethodError>>` shape must keep compiling.
+**Compatibility rule:** The crate's public API — `Dispatcher::new`, `register`, `add_capability`, `capabilities`, `with_limits`, `limits`, `process`, `CORE_CAPABILITY`, `Limits`, `Request`, `Response`, `Invocation`, `RequestError`, `MethodError`, `Session`, `Session::for_account` — must remain source-compatible with current downstream usage in `ms-api`, `ms-jmap-mail`, `bin/owneyd`. Phase 2 is the one exception: it adds a new return type accepted by `register`, but the existing `Fn(Value, Arc<Ctx>) -> Future<Output = Result<Value, MethodError>>` shape must keep compiling.
 
 ---
 
@@ -491,7 +491,7 @@ impl From<Result<Value, MethodError>> for Result<MethodResult, MethodError> {
 **Step 3: Verify downstream compiles unchanged**
 
 Run: `cargo build --workspace`
-Expected: succeeds. `ms-jmap-mail` handlers return `Result<Value, MethodError>` — the blanket lifts them. `ms-api` and `bin/mailserverd` are unaffected (they only call `process`).
+Expected: succeeds. `ms-jmap-mail` handlers return `Result<Value, MethodError>` — the blanket lifts them. `ms-api` and `bin/owneyd` are unaffected (they only call `process`).
 
 **Step 4: Run all tests**
 
@@ -934,10 +934,10 @@ Change the body of `register` to:
     }
 ```
 
-Also expose an automatic-declare variant for ergonomics, since downstream callers in `ms-jmap-mail` use plain `add_capability` then `register` already (see `bin/mailserverd/src/main.rs` at line 467 and `ms-jmap-mail/src/lib.rs` line 33). Verify by reading:
+Also expose an automatic-declare variant for ergonomics, since downstream callers in `ms-jmap-mail` use plain `add_capability` then `register` already (see `bin/owneyd/src/main.rs` at line 467 and `ms-jmap-mail/src/lib.rs` line 33). Verify by reading:
 
 - `crate/ms-jmap-mail/src/lib.rs` declares the capability in `register` (`add_capability` first, then each method). Confirmed earlier.
-- `bin/mailserverd/src/main.rs:467` constructs a `Dispatcher::new("0")` and then registers methods — it must be updated to call `add_capability` for any non-core capability first, or we make `register` auto-declare. **Auto-declare** is more ergonomic and matches the existing call sites' behavior. Use that:
+- `bin/owneyd/src/main.rs:467` constructs a `Dispatcher::new("0")` and then registers methods — it must be updated to call `add_capability` for any non-core capability first, or we make `register` auto-declare. **Auto-declare** is more ergonomic and matches the existing call sites' behavior. Use that:
 
 Change to:
 
@@ -959,7 +959,7 @@ And update the failing test to assert auto-declare instead of panic:
     }
 ```
 
-Replace Task 3.4's failing test above with this one. The behavior matches current downstream usage so `mailserverd/src/main.rs:467` and `ms-jmap-mail/src/lib.rs:33` continue to compile and behave identically. Document this in a doc-comment on `register`.
+Replace Task 3.4's failing test above with this one. The behavior matches current downstream usage so `owneyd/src/main.rs:467` and `ms-jmap-mail/src/lib.rs:33` continue to compile and behave identically. Document this in a doc-comment on `register`.
 
 **Step 4: Run tests**
 

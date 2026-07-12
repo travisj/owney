@@ -6,8 +6,8 @@ set -e
 
 DOMAIN="${1:?Domain required: $0 <domain>}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-BUCKET_NAME="mailserver-backup-${DOMAIN//./-}"
-IAM_USER="mailserver-backup"
+BUCKET_NAME="owney-backup-${DOMAIN//./-}"
+IAM_USER="owney-backup"
 
 echo "=== AWS S3 Backup Setup for $DOMAIN ==="
 echo "Region: $AWS_REGION"
@@ -124,7 +124,7 @@ echo "=========================================="
 echo "✓ S3 backup storage ready!"
 echo "=========================================="
 echo ""
-echo "Add to mailserver.toml [backup] section:"
+echo "Add to owney.toml [backup] section:"
 echo ""
 echo "[backup]"
 echo "type = \"s3\""
@@ -141,7 +141,7 @@ else
 fi
 echo ""
 echo "Then test with:"
-echo "  mailserverd --config mailserver.toml backup create"
+echo "  owneyd --config owney.toml backup create"
 echo ""
 echo "Backup retention:"
 echo "  - Versioning: ON (recover any backup)"

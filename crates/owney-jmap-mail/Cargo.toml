@@ -1,0 +1,28 @@
+[package]
+name = "owney-jmap-mail"
+description = "RFC 8621 mail data types (Mailbox/Email/Thread) bound to owney-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+jmap-core = { workspace = true }
+owney-api = { workspace = true }
+owney-core = { workspace = true }
+owney-storage = { workspace = true }
+mail-parser = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+owney-delivery = { workspace = true }
+owney-events = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

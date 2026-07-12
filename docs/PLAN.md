@@ -2,9 +2,9 @@
 
 ## Context
 
-Email is the most successful federated protocol ever shipped — and it has barely advanced in decades. This project re-imagines the mailserver from first principles: a single Rust binary you deploy on your own domain in minutes, which speaks flawless standards-compliant SMTP to the rest of the world, but whose native interface is a modern realtime API (JMAP + MCP), with AI woven into the core (screening, categorization, summarization, drafting, one-click unsubscribe) and PGP handled so invisibly that users never touch a keyring. The eventual goal includes first-party clients; this plan covers the server.
+Email is the most successful federated protocol ever shipped — and it has barely advanced in decades. This project re-imagines the owney from first principles: a single Rust binary you deploy on your own domain in minutes, which speaks flawless standards-compliant SMTP to the rest of the world, but whose native interface is a modern realtime API (JMAP + MCP), with AI woven into the core (screening, categorization, summarization, drafting, one-click unsubscribe) and PGP handled so invisibly that users never touch a keyring. The eventual goal includes first-party clients; this plan covers the server.
 
-Research (July 2026) confirms the niche is open: no mailserver has first-party MCP, every polished AI email client is Gmail-locked, and **no standalone JMAP server library exists in any language's ecosystem** — building one is both our largest greenfield component and a publishable contribution.
+Research (July 2026) confirms the niche is open: no owney has first-party MCP, every polished AI email client is Gmail-locked, and **no standalone JMAP server library exists in any language's ecosystem** — building one is both our largest greenfield component and a publishable contribution.
 
 ## Decisions (locked with user)
 
@@ -19,7 +19,7 @@ Research (July 2026) confirms the niche is open: no mailserver has first-party M
 | Multi-user | **Multi-account schema from day one; single-user admin flows in v1** (users created via CLI) |
 | Screener UX | **HEY-style Screener mailbox** — unknown/uncertain senders land there; approve/block teaches the system |
 | SQLite driver | `rusqlite` behind a dedicated writer task (full FTS5/backup-API access); 1-day spike in M0 to confirm vs sqlx |
-| Name | Working name `mailserver`; candidates below |
+| Name | Working name `owney`; candidates below |
 
 ### Name candidates (pick anytime; crates use a neutral `ms-` prefix until then)
 - **Loft** — a pigeon loft is where homing pigeons live; short, warm, "mail comes home"
@@ -32,7 +32,7 @@ Research (July 2026) confirms the niche is open: no mailserver has first-party M
 Single Cargo workspace, one deployable binary. `jmap-core` is designed for standalone crates.io publication.
 
 ```
-mailserver/
+owney/
 ├── Cargo.toml                  # workspace, shared deps/lints, release profile (LTO, strip)
 ├── crates/
 │   ├── ms-core                 # domain types, ids, config schema, error taxonomy, firewall traits
@@ -52,7 +52,7 @@ mailserver/
 │   ├── ms-backup               # consistent snapshots (SQLite backup API + blob manifest), restore, schedules, off-site
 │   ├── ms-testkit              # in-process server harness, testcontainers fixtures, JMAP conformance suite, live-fire e2e
 │   └── ms-cli                  # admin subcommands
-└── bin/mailserverd             # single binary: serve | setup | backup | admin | doctor
+└── bin/owneyd             # single binary: serve | setup | backup | admin | doctor
 ```
 
 **Foundation stack**: tokio, rustls 0.23 (PQ-hybrid TLS default), axum, hickory-resolver 0.26, mail-parser 0.11, mail-auth 0.11, mail-send 0.6, mail-builder, smtp-proto 0.2, sequoia-openpgp 2.4, rusqlite, rmcp. **Avoid**: Stalwart server code and `sieve-rs` (AGPL-incompatible-with-our-independence goals aside, we want clean-room JMAP anyway), async-std (dead), OpenSSL.
@@ -120,7 +120,7 @@ Emission posture (2026-correct): **v4 keys (Ed25519/X25519), SEIPDv1 default for
 
 ## Roadmap (8 milestones, ~7–9 months solo)
 
-- **M0 — Skeleton (1–2 wk)**: workspace compiles; ms-core config; ms-storage with migrations + encrypted blob round-trip in tests; ms-events; `mailserverd serve` runs; CI (fmt, clippy, test, cargo-deny). Includes rusqlite-vs-sqlx spike.
+- **M0 — Skeleton (1–2 wk)**: workspace compiles; ms-core config; ms-storage with migrations + encrypted blob round-trip in tests; ms-events; `owneyd serve` runs; CI (fmt, clippy, test, cargo-deny). Includes rusqlite-vs-sqlx spike.
 - **M1 — Receives real mail (3–4 wk)**: SMTP inbound + STARTTLS/ACME, session state machine, SPF/DKIM/DMARC/ARC verdicts stored, threading, `admin inbox/show` CLI. **Demo**: point MX at a VPS, send from Gmail, read it with auth verdicts via CLI.
 - **M2 — Sends mail that lands (3–4 wk)**: setup wizard (DNS gen + verification polling), DKIM signing, durable queue/retries/bounces, MTA-STS outbound, submission auth, `doctor`, smarthost relay mode. **Demo**: fresh domain → all DNS green → Gmail "Show original" shows SPF/DKIM/DMARC pass, inbox placement. **Gate: go/no-go on the self-hosted-deliverability thesis.**
 - **M3 — JMAP core + realtime (5–6 wk, largest greenfield)**: `jmap-core` lib, ms-jmap-mail (get/set/query/changes + EmailSubmission), SSE + RFC 8887 WS push, bearer auth, minimal web debug UI. **Demo**: a third-party JMAP client does live mail; two sessions see each other's changes in realtime.
@@ -157,5 +157,5 @@ Schedule risks: M2 (deliverability) and M3 (JMAP scope).
 2. `crates/ms-core/src/lib.rs` — domain types, config schema, firewall traits
 3. `crates/ms-storage/src/lib.rs` — schema, modseq discipline, encrypted blob store
 4. `crates/ms-events/src/lib.rs` — typed event bus
-5. `bin/mailserverd/src/main.rs` — `serve | setup | backup | admin | doctor` scaffold
+5. `bin/owneyd/src/main.rs` — `serve | setup | backup | admin | doctor` scaffold
 6. `crates/ms-smtp-in/src/session.rs` — SMTP session state machine (start of M1)

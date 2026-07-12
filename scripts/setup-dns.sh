@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup-dns.sh: Generate DNS records for a mailserver domain
+# setup-dns.sh: Generate DNS records for an owney domain
 # Supports manual entry, Route53, Cloudflare, and Bind zone file formats
 
 set -e
@@ -38,9 +38,9 @@ case "$PROVIDER" in
         echo "   Name:   _dmarc"
         echo "   Value:  v=DMARC1; p=quarantine; rua=mailto:dmarc@$DOMAIN"
         echo ""
-        echo "5. DKIM (after running mailserverd):"
+        echo "5. DKIM (after running owneyd):"
         echo "   Name:   default._domainkey"
-        echo "   Value:  Run: mailserverd dkim generate $DOMAIN"
+        echo "   Value:  Run: owneyd dkim generate $DOMAIN"
         echo "           and add the resulting TXT record"
         echo ""
         echo "Verification: dig MX $DOMAIN +short"

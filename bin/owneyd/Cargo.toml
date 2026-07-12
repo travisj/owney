@@ -1,0 +1,40 @@
+[package]
+name = "owneyd"
+description = "Owney: one binary — serve, setup, backup, admin, doctor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+jmap-core = { workspace = true }
+owney-api = { workspace = true }
+owney-ai = { workspace = true }
+owney-authn = { workspace = true }
+owney-backup = { workspace = true }
+owney-core = { workspace = true }
+owney-doctor = { workspace = true }
+owney-update = { workspace = true }
+owney-delivery = { workspace = true }
+owney-events = { workspace = true }
+owney-jmap-mail = { workspace = true }
+owney-pgp = { workspace = true }
+owney-setup = { workspace = true }
+owney-smtp-in = { workspace = true }
+owney-storage = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde_json = { workspace = true }
+tokio-rustls = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+toml = { workspace = true }
+
+[lints]
+workspace = true

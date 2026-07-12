@@ -1,0 +1,32 @@
+[package]
+name = "owney-delivery"
+description = "Outbound mail: DKIM signing, durable queue worker, MX routing, retries and bounces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+owney-core = { workspace = true }
+owney-events = { workspace = true }
+owney-pgp = { workspace = true }
+owney-storage = { workspace = true }
+base64 = { workspace = true }
+hickory-resolver = { workspace = true }
+mail-auth = { workspace = true }
+mail-send = { workspace = true }
+rsa = { workspace = true }
+rustls = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+owney-authn = { workspace = true }
+owney-smtp-in = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

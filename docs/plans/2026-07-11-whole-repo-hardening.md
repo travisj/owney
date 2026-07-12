@@ -1,8 +1,8 @@
-# mailserver: Whole-Repo Hardening Plan
+# owney: Whole-Repo Hardening Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Bring the entire `mailserver` workspace (12 crates, ~8,500 lines of Rust) to a reviewable, RFC-compliant, security-hardened state. Each phase ships a self-contained set of fixes that passes its own tests, clippy, and integration coverage without breaking downstream crates.
+**Goal:** Bring the entire `owney` workspace (12 crates, ~8,500 lines of Rust) to a reviewable, RFC-compliant, security-hardened state. Each phase ships a self-contained set of fixes that passes its own tests, clippy, and integration coverage without breaking downstream crates.
 
 **Architecture:** Six phases, organized by blast radius (foundation → data → auth → mail-protocols → API/AI → documentation/polish). Each phase includes a verification step that locks in correctness before the next phase starts. Within each phase, tasks are independent when possible and cherry-picked into the same commit when coupled.
 
@@ -27,7 +27,7 @@ Rationale: many of the issues found in downstream crates are *caused* by gaps in
 | # | Task | Files | Estimated effort |
 |---|------|-------|---|
 | 0.1 | Push `Ctx: Send + Sync + 'static` bounds — already done in jmap-core; mirror this style across `ms-api` if similar bindings exist | — | 0 |
-| 0.2 | Re-home `Submitter` from `ms-core` (lib.rs) to `ms-delivery`; re-export from `ms-core` for backward compat | `crates/ms-core/src/lib.rs`, `crates/ms-delivery/Cargo.toml`, `bin/mailserverd/src/main.rs` | 0.5 d |
+| 0.2 | Re-home `Submitter` from `ms-core` (lib.rs) to `ms-delivery`; re-export from `ms-core` for backward compat | `crates/ms-core/src/lib.rs`, `crates/ms-delivery/Cargo.toml`, `bin/owneyd/src/main.rs` | 0.5 d |
 | 0.3 | Add typed ids: `CreateId(String)` and `EmailSubmissionId(Uuid)` to `ms-core::id` via the existing `uuid_id!` macro | `crates/ms-core/src/id.rs` | 0.25 d |
 | 0.4 | `ModSeq::next` → `Option<Self>` (or saturating variant) + test at `u64::MAX` boundary | `crates/ms-core/src/id.rs` | 0.25 d |
 | 0.5 | `InvalidBlobId` → split variants (`TooShort`/`TooLong`/`NonHex{index}`); document case-sensitivity in `Display` (uppercase in, lowercase out — pick one and codify) | `crates/ms-core/src/id.rs` | 0.25 d |
@@ -125,7 +125,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Phase 3 — Outbound mail (`ms-delivery`): MTA-STS / DANE / DSN / retry policy
 
-Rationale: the review found *every* major outbound-mail control is missing or wrong: no MTA-STS, no DANE, no-op STARTTLS fallback, hand-rolled non-RFC-3460 DSN, retry policy that ignores enhanced status codes. This is the highest-leverage phase for a mailserver claiming to "speak flawless standards-compliant SMTP to the rest of the world" — without these, the outbound path advertises a privacy posture it can't deliver.
+Rationale: the review found *every* major outbound-mail control is missing or wrong: no MTA-STS, no DANE, no-op STARTTLS fallback, hand-rolled non-RFC-3460 DSN, retry policy that ignores enhanced status codes. This is the highest-leverage phase for a owney claiming to "speak flawless standards-compliant SMTP to the rest of the world" — without these, the outbound path advertises a privacy posture it can't deliver.
 
 Order: MTA-STS + DANE → STARTTLS gate → proper DSN → retry rewrite → tests.
 
@@ -294,12 +294,12 @@ Rationale: the work in Phases 0–5 brings functional correctness. Phase 6 makes
 | 6.1 | `ms-mcp` README documenting embedder contract + setup steps | 0.25 d |
 | 6.2 | `ms-smtp-in` state-machine ASCII diagram in module docs | 0.25 d |
 | 6.3 | Top-level `docs/PATTERNS.md` — "how to add a new JMAP method" / "how to add a new AI skill" / "how to add a new SMTP-in test" | 0.5 d |
-| 6.4 | Replace `mailserverd config example` round-trip test — add `Config::example()` → `Config::load` round-trip in `ms-core` | 0.25 d |
+| 6.4 | Replace `owneyd config example` round-trip test — add `Config::example()` → `Config::load` round-trip in `ms-core` | 0.25 d |
 | 6.5 | `cargo doc --workspace --no-deps` clean in CI (currently `ms-core` had an HTML-tag warning fixed in Phase 0.12) | 0.1 d |
 | 6.6 | CI gate: workspace-wide `cargo clippy --all-targets -- -D warnings` must pass (unblocked by Phase 0.11) | 0.25 d |
 | 6.7 | CI gate: workspace-wide `cargo test` must pass; add a `cargo test --workspace --no-fail-fast` script | 0.1 d |
 | 6.8 | `docs/PLAN.md` updates: removed MTA-STS-vhost/MSG-related claims that don't exist; mark items addressed by phases | 0.25 d |
-| 6.9 | Add an integration test crate `tests/mailserver_e2e.rs` exercising SMPT-in → SMTP-inject → AI categorized → JMAP query end-to-end | 1 d |
+| 6.9 | Add an integration test crate `tests/owney_e2e.rs` exercising SMPT-in → SMTP-inject → AI categorized → JMAP query end-to-end | 1 d |
 | 6.10 | Bisect-friendly commits — confirm each phase's branch cherry-picks cleanly onto `main` | 0.25 d |
 
 **End-of-repo verification**:

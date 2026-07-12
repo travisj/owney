@@ -2174,39 +2174,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mailserverd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "jmap-core",
- "ms-ai",
- "ms-api",
- "ms-authn",
- "ms-backup",
- "ms-core",
- "ms-delivery",
- "ms-doctor",
- "ms-events",
- "ms-jmap-mail",
- "ms-pgp",
- "ms-setup",
- "ms-smtp-in",
- "ms-storage",
- "ms-update",
- "rustls",
- "rustls-pemfile",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2332,260 +2299,6 @@ dependencies = [
  "smallvec",
  "tagptr",
  "uuid",
-]
-
-[[package]]
-name = "ms-ai"
-version = "0.1.0"
-dependencies = [
- "mail-parser",
- "ms-core",
- "ms-events",
- "ms-storage",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-api"
-version = "0.1.0"
-dependencies = [
- "axum",
- "http-body-util",
- "jmap-core",
- "ms-core",
- "ms-delivery",
- "ms-events",
- "ms-mcp",
- "ms-pgp",
- "ms-storage",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "ms-authn"
-version = "0.1.0"
-dependencies = [
- "mail-auth",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ms-backup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "chrono",
- "ms-core",
- "ms-storage",
- "rusqlite",
- "serde",
- "serde_json",
- "tar",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "walkdir",
- "zstd",
-]
-
-[[package]]
-name = "ms-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "toml",
- "uuid",
-]
-
-[[package]]
-name = "ms-delivery"
-version = "0.1.0"
-dependencies = [
- "base64",
- "hickory-resolver",
- "mail-auth",
- "mail-send",
- "ms-authn",
- "ms-core",
- "ms-events",
- "ms-pgp",
- "ms-smtp-in",
- "ms-storage",
- "rsa",
- "rustls",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-doctor"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "ms-core",
- "ms-delivery",
- "ms-events",
- "ms-setup",
- "ms-storage",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tracing",
-]
-
-[[package]]
-name = "ms-events"
-version = "0.1.0"
-dependencies = [
- "ms-core",
- "serde",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-jmap-mail"
-version = "0.1.0"
-dependencies = [
- "jmap-core",
- "mail-parser",
- "ms-api",
- "ms-core",
- "ms-delivery",
- "ms-events",
- "ms-storage",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-mcp"
-version = "0.1.0"
-dependencies = [
- "mail-parser",
- "ms-ai",
- "ms-core",
- "ms-delivery",
- "ms-events",
- "ms-storage",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-pgp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "blake3",
- "mail-parser",
- "ms-core",
- "ms-events",
- "ms-storage",
- "sequoia-openpgp",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ms-setup"
-version = "0.1.0"
-dependencies = [
- "hickory-resolver",
- "ms-core",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ms-smtp-in"
-version = "0.1.0"
-dependencies = [
- "ms-core",
- "rcgen",
- "rustls",
- "smtp-proto",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tracing",
-]
-
-[[package]]
-name = "ms-storage"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "getrandom 0.3.4",
- "mail-parser",
- "ms-core",
- "ms-events",
- "rusqlite",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "ms-update"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "ms-core",
- "ms-events",
- "ms-storage",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -2728,6 +2441,293 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+
+[[package]]
+name = "owney-ai"
+version = "0.1.0"
+dependencies = [
+ "mail-parser",
+ "owney-core",
+ "owney-events",
+ "owney-storage",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "jmap-core",
+ "owney-core",
+ "owney-delivery",
+ "owney-events",
+ "owney-mcp",
+ "owney-pgp",
+ "owney-storage",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "owney-authn"
+version = "0.1.0"
+dependencies = [
+ "mail-auth",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "owney-backup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "owney-core",
+ "owney-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "zstd",
+]
+
+[[package]]
+name = "owney-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "uuid",
+]
+
+[[package]]
+name = "owney-delivery"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hickory-resolver",
+ "mail-auth",
+ "mail-send",
+ "owney-authn",
+ "owney-core",
+ "owney-events",
+ "owney-pgp",
+ "owney-smtp-in",
+ "owney-storage",
+ "rsa",
+ "rustls",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-doctor"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "owney-core",
+ "owney-delivery",
+ "owney-events",
+ "owney-setup",
+ "owney-storage",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "owney-events"
+version = "0.1.0"
+dependencies = [
+ "owney-core",
+ "serde",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-jmap-mail"
+version = "0.1.0"
+dependencies = [
+ "jmap-core",
+ "mail-parser",
+ "owney-api",
+ "owney-core",
+ "owney-delivery",
+ "owney-events",
+ "owney-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-mcp"
+version = "0.1.0"
+dependencies = [
+ "mail-parser",
+ "owney-ai",
+ "owney-core",
+ "owney-delivery",
+ "owney-events",
+ "owney-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-pgp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "blake3",
+ "mail-parser",
+ "owney-core",
+ "owney-events",
+ "owney-storage",
+ "sequoia-openpgp",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "owney-setup"
+version = "0.1.0"
+dependencies = [
+ "hickory-resolver",
+ "owney-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "owney-smtp-in"
+version = "0.1.0"
+dependencies = [
+ "owney-core",
+ "rcgen",
+ "rustls",
+ "smtp-proto",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
+name = "owney-storage"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "mail-parser",
+ "owney-core",
+ "owney-events",
+ "rusqlite",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "owney-update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "owney-core",
+ "owney-events",
+ "owney-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "owneyd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "jmap-core",
+ "owney-ai",
+ "owney-api",
+ "owney-authn",
+ "owney-backup",
+ "owney-core",
+ "owney-delivery",
+ "owney-doctor",
+ "owney-events",
+ "owney-jmap-mail",
+ "owney-pgp",
+ "owney-setup",
+ "owney-smtp-in",
+ "owney-storage",
+ "owney-update",
+ "rustls",
+ "rustls-pemfile",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "p256"

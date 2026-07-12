@@ -1,6 +1,6 @@
-# mailserver (working name)
+# owney (working name)
 
-A from-first-principles mailserver for today: a single Rust binary you deploy on
+A from-first-principles owney for today: a single Rust binary you deploy on
 your own domain in minutes. It speaks flawless, standards-compliant SMTP to the
 rest of the world — but its native interface is a modern realtime API (JMAP +
 REST + MCP), with AI woven into the core (screening, categorization,
@@ -24,7 +24,7 @@ Status: **M0 — skeleton**. See `docs/PLAN.md` for the founding plan.
 
 ## Layout
 
-Cargo workspace; one deployable binary (`bin/mailserverd`), crate-per-concern
+Cargo workspace; one deployable binary (`bin/owneyd`), crate-per-concern
 under `crates/`. `crates/jmap-core` (M3) is a clean-room generic JMAP server
 library intended for standalone publication.
 

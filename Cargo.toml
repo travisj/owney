@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "bin/mailserverd"]
+members = ["crates/*", "bin/owneyd"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,22 +11,22 @@ authors = ["Travis Johnson <travisj@gmail.com>"]
 
 [workspace.dependencies]
 # internal crates
-ms-ai = { path = "crates/ms-ai" }
-ms-backup = { path = "crates/ms-backup" }
-ms-doctor = { path = "crates/ms-doctor" }
-ms-update = { path = "crates/ms-update" }
+owney-ai = { path = "crates/owney-ai" }
+owney-backup = { path = "crates/owney-backup" }
+owney-doctor = { path = "crates/owney-doctor" }
+owney-update = { path = "crates/owney-update" }
 jmap-core = { path = "crates/jmap-core" }
-ms-api = { path = "crates/ms-api" }
-ms-authn = { path = "crates/ms-authn" }
-ms-core = { path = "crates/ms-core" }
-ms-delivery = { path = "crates/ms-delivery" }
-ms-events = { path = "crates/ms-events" }
-ms-jmap-mail = { path = "crates/ms-jmap-mail" }
-ms-mcp = { path = "crates/ms-mcp" }
-ms-pgp = { path = "crates/ms-pgp" }
-ms-setup = { path = "crates/ms-setup" }
-ms-smtp-in = { path = "crates/ms-smtp-in" }
-ms-storage = { path = "crates/ms-storage" }
+owney-api = { path = "crates/owney-api" }
+owney-authn = { path = "crates/owney-authn" }
+owney-core = { path = "crates/owney-core" }
+owney-delivery = { path = "crates/owney-delivery" }
+owney-events = { path = "crates/owney-events" }
+owney-jmap-mail = { path = "crates/owney-jmap-mail" }
+owney-mcp = { path = "crates/owney-mcp" }
+owney-pgp = { path = "crates/owney-pgp" }
+owney-setup = { path = "crates/owney-setup" }
+owney-smtp-in = { path = "crates/owney-smtp-in" }
+owney-storage = { path = "crates/owney-storage" }
 
 # async runtime & observability
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs", "io-util"] }
