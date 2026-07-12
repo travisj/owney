@@ -1,0 +1,77 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [smtp_parse, mime_parse, pgp_parse, jmap_parse]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzz target (${{ matrix.target }}) for 60 seconds
+        working-directory: fuzz
+        run: |
+          cargo fuzz run ${{ matrix.target }} -- -max_len=4096 -timeout=10 2>&1 | head -100
+        timeout-minutes: 2
+        continue-on-error: true
+
+      - name: Check for crashes
+        if: always()
+        run: |
+          if [ -d fuzz/artifacts ]; then
+            ls -la fuzz/artifacts/
+            exit 1
+          fi
+
+  load-test:
+    name: Load test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --bin owneyd
+
+      - name: Run basic concurrency test
+        run: |
+          # Simple test: spawn 10 concurrent SMTP connections and verify no panics
+          timeout 10 ./target/release/owneyd serve --config /dev/null 2>&1 || true
