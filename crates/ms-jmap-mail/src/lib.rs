@@ -118,6 +118,13 @@ async fn mailbox_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
 }
 
 fn mailbox_json(mailbox: &ms_storage::MailboxRow) -> Value {
+    // `totalThreads` / `unreadThreads` are required by RFC 8621 §6.1 but the
+    // storage layer's `mailboxes()` query doesn't compute them. They were
+    // previously returned as `total_emails` / `unread_emails`, which is
+    // semantically wrong (a thread with 100 replies is *one* thread, 100 emails).
+    // Until `ms_storage::MailboxRow` carries the threaded count separately,
+    // surface them as `null` so clients can render the row without being
+    // lied to. (Tracked: Phase N+1 storage refactor.)
     json!({
         "id": mailbox.id,
         "name": mailbox.name,
@@ -126,8 +133,8 @@ fn mailbox_json(mailbox: &ms_storage::MailboxRow) -> Value {
         "sortOrder": mailbox.sort_order,
         "totalEmails": mailbox.total_emails,
         "unreadEmails": mailbox.unread_emails,
-        "totalThreads": mailbox.total_emails,
-        "unreadThreads": mailbox.unread_emails,
+        "totalThreads": Value::Null,
+        "unreadThreads": Value::Null,
         "myRights": {
             "mayReadItems": true, "mayAddItems": true, "mayRemoveItems": true,
             "maySetSeen": true, "maySetKeywords": true, "mayCreateChild": true,
@@ -564,12 +571,15 @@ fn compose_from_jmap(account: &ms_storage::Account, object: &Value) -> Result<Ve
 async fn identity_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
     let args: GetArgs = parse(args)?;
     check_account(&ctx, &args.account_id)?;
+    // RFC 8621 §6.4: `name` is optional (nullable) — `null` when unset.
+    // Don't fall back to the bare email; that's a leakage of the local-part.
+    let name = ctx.account.display_name.clone().map(Value::String).unwrap_or(Value::Null);
     Ok(json!({
         "accountId": args.account_id,
         "state": "0",
         "list": [{
             "id": "default",
-            "name": ctx.account.display_name.clone().unwrap_or_else(|| ctx.account.email.clone()),
+            "name": name,
             "email": ctx.account.email,
             "replyTo": null,
             "bcc": null,
