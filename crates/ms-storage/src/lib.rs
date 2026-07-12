@@ -5,6 +5,15 @@
 //! crate, and every mutation bumps the per-account modseq for the data types
 //! it touched and publishes a `StateChange` event after commit.** JMAP
 //! `/changes`, push, and client realtime sync are all derived from that.
+//!
+//! ## Backend portability — explicitly *not* abstracted today
+//!
+//! `Storage` is a concrete struct, not a trait. Swapping the SQLite backend
+//! for PostgreSQL or an in-memory test double would touch every call site.
+//! This is a deliberate trade-off: the storage crate is the only place
+//! touching `rusqlite` directly, so the blast radius of a future trait
+//! refactor is bounded to this one crate. Until there is a second backend
+//! worth supporting, the untyped concrete API stays.
 
 mod ai_store;
 mod blob;
@@ -274,7 +283,7 @@ pub(crate) fn unix_now() -> i64 {
 mod tests {
     use super::*;
 
-    async fn open(dir: &Path) -> (Storage, EventBus) {
+    pub(crate) async fn open(dir: &Path) -> (Storage, EventBus) {
         let events = EventBus::new(64);
         let storage = Storage::open(dir, events.clone()).expect("open");
         (storage, events)
@@ -369,6 +378,34 @@ mod tests {
         let (storage, _events) = open(dir.path()).await;
         let found = storage.account(account.id).await.expect("lookup");
         assert_eq!(found, Some(account));
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn failed_ingest_does_not_advance_email_modseq() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = open(dir.path()).await;
+        let account = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create");
+
+        let before = storage.state(account.id, DataType::Email).await.expect("state");
+        assert_eq!(before, ModSeq(0), "starts at 0");
+
+        // Ingest targeting a mailbox role that doesn't exist on this account.
+        // The storage layer rejects with `Corrupt`, and any modseq bump inside
+        // the same transaction must roll back (SQLite's atomic guarantee).
+        let result = storage
+            .ingest_email(account.id, b"From: a@x\r\n\r\nhello\r\n".to_vec(), "nonexistent_role", None)
+            .await;
+        assert!(result.is_err(), "ingest to missing role must fail");
+
+        let after = storage.state(account.id, DataType::Email).await.expect("state");
+        assert_eq!(
+            after, before,
+            "rolled-back ingest must leave modseq untouched (got {before:?} → {after:?})"
+        );
         storage.close();
     }
 }
