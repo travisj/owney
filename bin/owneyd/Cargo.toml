@@ -22,6 +22,7 @@ owney-imap = { workspace = true }
 owney-jmap-mail = { workspace = true }
 owney-pgp = { workspace = true }
 owney-setup = { workspace = true }
+owney-spam = { workspace = true }
 owney-smtp-in = { workspace = true }
 owney-storage = { workspace = true }
 rustls = { workspace = true }

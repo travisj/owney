@@ -27,6 +27,7 @@ owney-jmap-mail = { path = "crates/owney-jmap-mail" }
 owney-mcp = { path = "crates/owney-mcp" }
 owney-pgp = { path = "crates/owney-pgp" }
 owney-setup = { path = "crates/owney-setup" }
+owney-spam = { path = "crates/owney-spam" }
 owney-smtp-in = { path = "crates/owney-smtp-in" }
 owney-storage = { path = "crates/owney-storage" }
 

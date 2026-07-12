@@ -1,0 +1,23 @@
+[package]
+name = "owney-spam"
+description = "In-process spam filtering: DNSBL, heuristics, and per-account Bayes classifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+hickory-resolver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+owney-core = { workspace = true }
+owney-storage = { workspace = true }
+mail-parser = { workspace = true }
+
+[lints]
+workspace = true
