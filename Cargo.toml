@@ -12,6 +12,7 @@ authors = ["Travis Johnson <travisj@gmail.com>"]
 [workspace.dependencies]
 # internal crates
 ms-ai = { path = "crates/ms-ai" }
+ms-backup = { path = "crates/ms-backup" }
 jmap-core = { path = "crates/jmap-core" }
 ms-api = { path = "crates/ms-api" }
 ms-authn = { path = "crates/ms-authn" }
@@ -64,6 +65,9 @@ rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 chacha20poly1305 = "0.11"
 blake3 = "1.8"
 getrandom = "0.3"
+
+# backup
+tar = "0.4"
 
 # ids
 uuid = { version = "1.23", features = ["v7", "serde"] }
