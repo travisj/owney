@@ -13,7 +13,17 @@ const BATCH: usize = 16;
 
 /// Spawn the delivery loop. Aborting the returned handle stops it; in-flight
 /// attempts either complete (row updated) or are retried after restart —
-/// at-least-once, never lost.
+/// **at-least-once, never lost**.
+///
+/// ## Delivery semantics
+///
+/// Each claim is an atomic SQLite `UPDATE … RETURNING` that flips the row
+/// to `status='sending'` for this worker. On startup, [`Storage::reset_stale_claims`]
+/// returns any row still in `sending` to `queued`, so a worker that crashed
+/// mid-delivery hands the row back to the next worker without re-trying. Because
+/// the assignment to `sending` happens *before* the SMTP attempt is made, a
+/// successful SMTP attempt that crashes *before* its row update also gets
+/// retried (at-least-once, not exactly-once).
 pub fn spawn_worker<R: Router>(
     storage: Arc<Storage>,
     events: EventBus,
