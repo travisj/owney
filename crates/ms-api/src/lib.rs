@@ -101,6 +101,11 @@ async fn mcp(
 
 /// WKD direct method: serve the public key for the local part whose hash
 /// matches. Unauthenticated by design — this is key publication.
+///
+/// Content-Type is `application/vnd.gpg.key` per the WKD spec draft; clients
+/// (gnupg, K-9 Mail, browser OpenPGP plugins) key on this MIME. CORS is
+/// `*` because WKD is intrinsically cross-origin: browsers fetch keys from
+/// `openpgpkey.<domain>` while the user is on `https://<domain>`.
 async fn wkd_key(
     State(state): State<Arc<ApiState>>,
     Path(hash): Path<String>,
@@ -126,7 +131,14 @@ async fn wkd_key(
             })?;
         let der = ms_pgp::public_der(&cert)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
-        return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], der).into_response());
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/vnd.gpg.key"),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            ],
+            der,
+        )
+            .into_response());
     }
     Err(StatusCode::NOT_FOUND.into_response())
 }

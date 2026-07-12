@@ -39,56 +39,97 @@ pub fn tools() -> Value {
             "Fetch all emails in a thread.",
             json!({"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"]})
         ),
-        tool(
+        // Move is destructive (touches mailbox_ids) but recorded as
+        // undoable, so `idempotent=true` would mislead clients into
+        // skipping the AI-action log. Mark destructive only.
+        annotated_tool(
             "move_email",
             "Move an email to a mailbox role (archive, junk, trash, inbox, screener). Undoable.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string"}, "mailbox": {"type": "string"},
-            }, "required": ["id", "mailbox"]})
+            }, "required": ["id", "mailbox"]}),
+            true,
+            false,
         ),
-        tool(
+        // mark_read is destructive (flips $seen) but repeatable — the
+        // second call is idempotent. So both flags true.
+        annotated_tool(
             "mark_read",
             "Mark an email read or unread.",
             json!({"type": "object", "properties": {
                 "id": {"type": "string"}, "read": {"type": "boolean", "default": true},
-            }, "required": ["id"]})
+            }, "required": ["id"]}),
+            true,
+            true,
         ),
         tool(
             "summarize_thread",
             "Summarize a thread from its stored AI annotations.",
             json!({"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"]})
         ),
-        tool(
+        // create_draft is non-destructive (creates a new row).
+        annotated_tool(
             "create_draft",
             "Create a draft email in the Drafts mailbox (does not send).",
             json!({"type": "object", "properties": {
                 "to": {"type": "array", "items": {"type": "string"}},
                 "subject": {"type": "string"}, "body": {"type": "string"},
-            }, "required": ["to", "subject", "body"]})
+            }, "required": ["to", "subject", "body"]}),
+            false,
+            false,
         ),
-        tool(
+        // send_email is the most dangerous. Both flags true because a
+        // second invocation creates a second outbound message.
+        annotated_tool(
             "send_email",
             "Send an email now (requires a send-scoped token).",
             json!({"type": "object", "properties": {
                 "to": {"type": "array", "items": {"type": "string"}},
                 "subject": {"type": "string"}, "body": {"type": "string"},
-            }, "required": ["to", "subject", "body"]})
+            }, "required": ["to", "subject", "body"]}),
+            true,
+            false,
         ),
         tool(
             "get_ai_activity",
             "List recent AI actions taken on this mailbox, each with an undoable flag.",
             json!({"type": "object", "properties": {"limit": {"type": "integer", "default": 20}}})
         ),
-        tool(
+        // undo_action is destructive but reversible by definition.
+        annotated_tool(
             "undo_action",
             "Undo an AI or agent action by id (from get_ai_activity).",
-            json!({"type": "object", "properties": {"actionId": {"type": "string"}}, "required": ["actionId"]})
+            json!({"type": "object", "properties": {"actionId": {"type": "string"}}, "required": ["actionId"]}),
+            true,
+            false,
         ),
     ])
 }
 
 fn tool(name: &str, description: &str, schema: Value) -> Value {
     json!({"name": name, "description": description, "inputSchema": schema})
+}
+
+/// Like [`tool`], but with MCP `annotations` per the 2025-06-18 spec:
+/// `destructive: true` for state-mutating operations, `idempotent: true`
+/// for safely-repeatable ones. Clients (Claude Code, Cursor, etc.) render
+/// these as warnings or suppress auto-execution accordingly.
+fn annotated_tool(
+    name: &str,
+    description: &str,
+    schema: Value,
+    destructive: bool,
+    idempotent: bool,
+) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema,
+        "annotations": {
+            "destructiveHint": destructive,
+            "idempotentHint": idempotent,
+        }
+    })
 }
 
 /// Handle one JSON-RPC request. Returns `None` for notifications (no id).
