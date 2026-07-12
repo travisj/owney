@@ -1,4 +1,4 @@
-# owney (working name)
+# owney
 
 A from-first-principles owney for today: a single Rust binary you deploy on
 your own domain in minutes. It speaks flawless, standards-compliant SMTP to the
