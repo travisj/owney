@@ -232,6 +232,15 @@ impl Storage {
         self.db
             .call(move |conn| {
                 let account = account_id.to_string();
+                // `table` is derived from the `DataType` match above, so its
+                // value is bounded to one of three `&'static str` constants.
+                // The `debug_assert!` below is a defense-in-depth check — if
+                // someone adds a new arm to the `match` without updating this
+                // assertion, CI will fail before the SQL is interpolated.
+                debug_assert!(
+                    matches!(table, "emails" | "mailboxes" | "threads"),
+                    "changes_since table {table:?} is not in the allow-list"
+                );
                 let mut stmt = conn.prepare(&format!(
                     "SELECT id, created_modseq FROM {table}
                      WHERE account_id = ?1 AND updated_modseq > ?2
