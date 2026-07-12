@@ -1,6 +1,6 @@
 # owney
 
-A from-first-principles owney for today: a single Rust binary you deploy on
+A mailserve for today: a single Rust binary you deploy on
 your own domain in minutes. It speaks flawless, standards-compliant SMTP to the
 rest of the world — but its native interface is a modern realtime API (JMAP +
 REST + MCP), with AI woven into the core (screening, categorization,
