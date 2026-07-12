@@ -371,4 +371,32 @@ mod tests {
         assert_eq!(found, Some(account));
         storage.close();
     }
+
+    #[tokio::test]
+    async fn failed_ingest_does_not_advance_email_modseq() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = open(dir.path()).await;
+        let account = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create");
+
+        let before = storage.state(account.id, DataType::Email).await.expect("state");
+        assert_eq!(before, ModSeq(0), "starts at 0");
+
+        // Ingest targeting a mailbox role that doesn't exist on this account.
+        // The storage layer rejects with `Corrupt`, and any modseq bump inside
+        // the same transaction must roll back (SQLite's atomic guarantee).
+        let result = storage
+            .ingest_email(account.id, b"From: a@x\r\n\r\nhello\r\n".to_vec(), "nonexistent_role", None)
+            .await;
+        assert!(result.is_err(), "ingest to missing role must fail");
+
+        let after = storage.state(account.id, DataType::Email).await.expect("state");
+        assert_eq!(
+            after, before,
+            "rolled-back ingest must leave modseq untouched (got {before:?} → {after:?})"
+        );
+        storage.close();
+    }
 }
