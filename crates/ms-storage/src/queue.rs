@@ -239,3 +239,62 @@ impl Storage {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ms_core::AccountId;
+
+    async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, ms_events::EventBus) {
+        crate::tests::open(tmp.path()).await
+    }
+
+    #[tokio::test]
+    async fn reset_stale_claims_resets_sending_to_queued() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+
+        use ms_core::BlobId;
+        let blob = BlobId([0xab; 32]);
+        let r1 = storage.enqueue(acct.id, blob, "alice@example.com", "bob@x.test").await.expect("e1");
+        let r2 = storage.enqueue(acct.id, blob, "alice@example.com", "carol@x.test").await.expect("e2");
+        assert_ne!(r1.id, r2.id);
+
+        // Simulate a worker that claimed the first row but crashed.
+        let r1_id = r1.id;
+        storage
+            .db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE queue SET status = 'sending' WHERE id = ?2",
+                    rusqlite::params![unix_now(), r1.id.to_string()],
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("direct update");
+
+        let reset_count = storage.reset_stale_claims().await.expect("reset");
+        assert_eq!(reset_count, 1, "exactly the one stuck row should reset");
+
+        storage
+            .db
+            .call(move |conn| {
+                let status: String = conn.query_row(
+                    "SELECT status FROM queue WHERE id = ?1",
+                    [r1_id.to_string()],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(status, "queued");
+                Ok(())
+            })
+            .await
+            .expect("verify");
+
+        storage.close();
+    }
+
+    #[allow(dead_code)]
+    fn _unused(_a: AccountId) {}
+}
