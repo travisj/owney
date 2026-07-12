@@ -81,8 +81,8 @@ impl SmtpParams {
             hostname: config.server.hostname.clone(),
             max_message_size: config.smtp.max_message_size,
             max_recipients: config.smtp.max_recipients,
-            max_errors: 10,
-            read_timeout: std::time::Duration::from_secs(300),
+            max_errors: config.smtp.max_errors,
+            read_timeout: std::time::Duration::from_secs(config.smtp.read_timeout_secs),
             tls: None,
         }
     }
