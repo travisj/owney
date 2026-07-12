@@ -1,9 +1,30 @@
-//! The per-connection SMTP session state machine.
+//! The per-connection SMTP state machine.
 //!
 //! Pipelining-correct by construction: every read is drained through the
 //! current mode (command parsing or DATA collection) until exhausted, and all
 //! generated responses are written in one batch. DATA termination mid-buffer
 //! flows straight back into command parsing for the remaining bytes.
+//!
+//! ## States
+//!
+//! ```text
+//!   Banner -> Command -> MAIL -> RCPT* -> DATA -> Deliver -> (back to Command)
+//!                 |          |                                  |
+//!                 |          +- RSET ----------------------------+
+//!                 |          +                                  |
+//!                 |          +- ABORT/QUIT -> tear down -> next banner
+//!                 |
+//!                 +- STARTTLS (only when announced, not in-flight) ->
+//!                 |      TLS-reset of transaction state -> Command
+//!                 |
+//!                 +- NOOP / VRFY / EXPN  (no transition)
+//! ```
+//!
+//! ## Errors
+//!
+//! Per-command error counter (default 10) drops the connection with `421`.
+//! Per-read idle timeout (default 300s) drops with `421`. Slow-data (no
+//! bytes for `read_timeout` after DATA start) drops with `421`.
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -59,7 +80,7 @@ pub async fn serve_connection<H, S>(
                     run_protocol(tls_stream, &mut session).await;
                 }
                 Err(err) => {
-                    tracing::debug!(%err, %remote, "tls handshake failed");
+                    tracing::warn!(%err, %remote, "tls handshake failed");
                 }
             }
         }
@@ -353,14 +374,23 @@ impl<H: MailHandler> Session<H> {
 
     /// Trace header prepended to every accepted message (RFC 5321 §4.4).
     fn received_header(&self) -> String {
+        // Strip CR/LF/control chars from any client-supplied value before
+        // splicing them into a header. Without this, a client sending
+        // `EHLO attacker\r\nBcc: victim@example.com` could split one
+        // header into many — header injection via the SMTP greeting.
         let helo = if self.helo.is_empty() {
-            "unknown"
+            "unknown".to_owned()
         } else {
-            &self.helo
+            self.helo
+                .chars()
+                .map(|c| if c == '\r' || c == '\n' || c.is_ascii_control() { ' ' } else { c })
+                .collect::<String>()
         };
+        // `self.remote` is `IpAddr`; its `Display` impl only emits digits,
+        // dots, hex digits, and colons — no CR/LF/control chars possible.
+        let remote = self.remote.to_string();
         format!(
             "Received: from {helo} ([{remote}])\r\n\tby {hostname} with {protocol};\r\n\t{date}\r\n",
-            remote = self.remote,
             hostname = self.params.hostname,
             protocol = if self.tls_active { "ESMTPS" } else { "ESMTP" },
             date = ms_core::time::rfc2822_utc(unix_now()),
