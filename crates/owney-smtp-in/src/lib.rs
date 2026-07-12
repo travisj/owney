@@ -41,8 +41,14 @@ pub struct InboundMail {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("delivery failed: {0}")]
-pub struct DeliverError(pub String);
+pub enum DeliverError {
+    /// Temporary failure (451 4.3.0): retry later.
+    #[error("temporary delivery failure: {0}")]
+    Temporary(String),
+    /// Permanent failure (550 5.7.1): reject the message.
+    #[error("permanent delivery failure: {0}")]
+    Permanent(String),
+}
 
 /// Server policy: recipient validation and delivery.
 pub trait MailHandler: Send + Sync + 'static {

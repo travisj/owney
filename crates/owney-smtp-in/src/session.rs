@@ -33,7 +33,7 @@ use smtp_proto::request::receiver::{DataReceiver, RequestReceiver};
 use smtp_proto::{Error as SmtpError, Request};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::{InboundMail, MailHandler, RcptVerdict, SmtpParams};
+use crate::{DeliverError, InboundMail, MailHandler, RcptVerdict, SmtpParams};
 
 /// Serve one SMTP connection to completion, including at most one STARTTLS
 /// upgrade.
@@ -397,9 +397,13 @@ impl<H: MailHandler> Session<H> {
         };
         match self.handler.deliver(mail).await {
             Ok(()) => reply(out, "250 2.0.0 accepted for delivery"),
-            Err(err) => {
-                tracing::warn!(%err, "delivery failed");
+            Err(DeliverError::Temporary(err)) => {
+                tracing::warn!(%err, "delivery failed (temporary)");
                 reply(out, "451 4.3.0 temporary delivery failure, try again");
+            }
+            Err(DeliverError::Permanent(err)) => {
+                tracing::warn!(%err, "delivery failed (permanent)");
+                reply(out, "550 5.7.1 message rejected");
             }
         }
     }

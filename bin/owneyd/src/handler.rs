@@ -63,13 +63,13 @@ impl MailHandler for ServerCore {
                 .storage
                 .resolve_recipient(recipient)
                 .await
-                .map_err(|err| DeliverError(err.to_string()))?
-                .ok_or_else(|| DeliverError(format!("{recipient} vanished after RCPT")))?;
+                .map_err(|err| DeliverError::Temporary(err.to_string()))?
+                .ok_or_else(|| DeliverError::Temporary(format!("{recipient} vanished after RCPT")))?;
 
             // Harvest Autocrypt keys; transparently decrypt encrypted-to-us.
             let pgp = owney_pgp::pipeline::inbound(&self.storage, account.id, raw.clone())
                 .await
-                .map_err(|err| DeliverError(format!("pgp: {err}")))?;
+                .map_err(|err| DeliverError::Temporary(format!("pgp: {err}")))?;
             for address in &pgp.key_changes {
                 self.events.publish(owney_events::Event::Security {
                     account_id: Some(account.id),
@@ -83,12 +83,12 @@ impl MailHandler for ServerCore {
                 .storage
                 .ingest_email(account.id, pgp.raw, "inbox", verdict_json.clone())
                 .await
-                .map_err(|err| DeliverError(err.to_string()))?;
+                .map_err(|err| DeliverError::Temporary(err.to_string()))?;
             if let Some(status) = &pgp.pgp_status {
                 self.storage
                     .set_pgp_status(ingested.id, status)
                     .await
-                    .map_err(|err| DeliverError(err.to_string()))?;
+                    .map_err(|err| DeliverError::Temporary(err.to_string()))?;
             }
 
             tracing::info!(
