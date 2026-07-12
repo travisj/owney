@@ -46,6 +46,12 @@ pub async fn serve_connection<H, S>(
     H: MailHandler,
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    // Wall-clock lifetime cap. Default 5 minutes — SMTP commands are
+    // stateless and should not hold a connection open for hours. Drop
+    // with `421` once exceeded.
+    let session_start = std::time::Instant::now();
+    let session_budget = std::time::Duration::from_secs(5 * 60);
+
     let mut session = Session {
         params,
         handler,
@@ -56,6 +62,8 @@ pub async fn serve_connection<H, S>(
         recipients: Vec::new(),
         errors: 0,
         tls_active: false,
+        session_start,
+        session_budget,
     };
 
     let greeting = format!("220 {} ESMTP ready\r\n", session.params.hostname);
@@ -104,6 +112,14 @@ where
     let mut out = Vec::with_capacity(512);
 
     'connection: loop {
+        // Wall-clock session budget.
+        if session.session_start.elapsed() > session.session_budget {
+            let _ = stream
+                .write_all(b"421 4.4.2 session expired, closing\r\n")
+                .await;
+            break;
+        }
+
         let read = tokio::time::timeout(session.params.read_timeout, stream.read(&mut buf)).await;
         let n = match read {
             Ok(Ok(0)) => break, // EOF
@@ -206,6 +222,8 @@ struct Session<H> {
     recipients: Vec<String>,
     errors: usize,
     tls_active: bool,
+    session_start: std::time::Instant,
+    session_budget: std::time::Duration,
 }
 
 impl<H: MailHandler> Session<H> {

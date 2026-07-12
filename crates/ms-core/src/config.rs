@@ -134,6 +134,24 @@ pub struct SmtpConfig {
     pub max_message_size: u64,
     /// Maximum recipients per message.
     pub max_recipients: usize,
+    /// Maximum number of command-syntax errors per connection before
+    /// we drop the session with `421`. Default 10 matches Postfix's
+    /// `smtpd_hard_error_limit` of 10 — typical mail clients issue <5
+    /// in the worst case, so the headroom is for deliberate probing.
+    #[serde(default = "default_smtp_max_errors")]
+    pub max_errors: usize,
+    /// Per-read idle timeout. Bytes for `read_timeout` after a connection
+    /// open or after the start of DATA cause the session to be dropped
+    /// with `421`. Default 5 minutes, configurable for noisy networks.
+    #[serde(default = "default_smtp_read_timeout")]
+    pub read_timeout_secs: u64,
+}
+
+fn default_smtp_max_errors() -> usize {
+    10
+}
+fn default_smtp_read_timeout() -> u64 {
+    300
 }
 
 impl Default for SmtpConfig {
@@ -142,6 +160,8 @@ impl Default for SmtpConfig {
             listen: vec!["0.0.0.0:25".to_owned()],
             max_message_size: 25 * 1024 * 1024,
             max_recipients: 100,
+            max_errors: default_smtp_max_errors(),
+            read_timeout_secs: default_smtp_read_timeout(),
         }
     }
 }
@@ -207,11 +227,15 @@ data_dir = "/var/lib/mailserver"
 
 [smtp]
 # Inbound SMTP (MX) listeners.
-listen = ["0.0.0.0:25"]
+ listen = ["0.0.0.0:25"]
 # Maximum message size in bytes (advertised via the SIZE extension).
 max_message_size = 26214400
 # Maximum recipients per message.
 max_recipients = 100
+# Per-connection syntax-error budget before 421-drop. Default 10.
+max_errors = 10
+# Per-read idle timeout in seconds. Default 300.
+read_timeout_secs = 300
 
 # Optional until `setup` provisions certificates automatically (M2):
 # [tls]

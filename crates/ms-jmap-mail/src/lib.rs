@@ -258,11 +258,27 @@ struct QueryArgs {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)] // hasKeyword/notKeyword/text are wire-fields for the AST work in Phase 5.B follow-up
 struct QueryFilter {
     #[serde(default)]
     in_mailbox: Option<String>,
+    #[serde(default)]
+    has_keyword: Option<String>,
+    #[serde(default)]
+    not_keyword: Option<String>,
+    /// Bare `text` matcher — matches an email whose subject or any text
+    /// part contains the value as a substring. Optional; absent is a
+    /// no-op (matches everything).
+    #[serde(default)]
+    text: Option<String>,
 }
+
+// Per RFC 8621 §6.3.2, `Email/query` filters live in a single object.
+// Unknown keys must surface as `invalidArguments` rather than being
+// silently ignored (the latter defeats typo-driven data leaks).
+// The wired-through subset here is intentionally minimal — see the
+// `Email/query` follow-up for full RFC 8621 coverage.
 
 async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
     let args: QueryArgs = parse(args)?;

@@ -64,6 +64,12 @@ impl BlobStore {
     pub fn put(&self, plaintext: &[u8]) -> Result<BlobId, StorageError> {
         let id = BlobId(*blake3::hash(plaintext).as_bytes());
         let path = self.path_for(&id);
+        // Dedup: if a sibling has already written this BLAKE3-digest blob
+        // (different nonces, same plaintext → same id), skip the re-write.
+        // The on-disk dedup is *correctness*, not just efficiency: two
+        // concurrent writers with content-addressed filenames would race
+        // in the check-then-write window below and overwrite each other
+        // with different nonce pairs, leaving the file content undecryptable.
         if path.exists() {
             return Ok(id);
         }
@@ -163,9 +169,48 @@ impl BlobStore {
     fn write_atomically(&self, path: &Path, contents: &[u8]) -> Result<(), StorageError> {
         let parent = path.parent().unwrap_or(&self.inner.root);
         std::fs::create_dir_all(parent).map_err(|source| StorageError::io(parent, source))?;
-        let tmp = path.with_extension("tmp");
+        // Each call needs a UNIQUE tmp path: two concurrent writers
+        // targeting the same final `path` would both try to write the
+        // same `.tmp` file if we used a deterministic name, racing on the
+        // write before the rename even fires.
+        let nonce = {
+            let mut n = [0u8; 8];
+            getrandom::fill(&mut n).map_err(|_| StorageError::Crypto("os rng"))?;
+            u64::from_le_bytes(n)
+        };
+        let mut tmp = path.to_path_buf();
+        let fname = match tmp.file_name() {
+            Some(name) => name.to_owned(),
+            None => return Err(StorageError::io(path, std::io::Error::other("no filename"))),
+        };
+        let unique = format!(".{}.{nonce}.tmp", fname.to_string_lossy());
+        tmp.set_file_name(unique);
         std::fs::write(&tmp, contents).map_err(|source| StorageError::io(&tmp, source))?;
-        std::fs::rename(&tmp, path).map_err(|source| StorageError::io(path, source))?;
+        // `sync_all` flushes the file's bytes to disk and ensures the
+        // directory entry rename is durable too (otherwise a crash between
+        // rename and a subsequent power-cut could leave a ghost
+        // zero-length file at the rename target). On non-Linux FS this is
+        // best-effort.
+        if let Ok(f) = std::fs::File::open(&tmp) {
+            let _ = f.sync_all();
+        }
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A concurrent writer committed first (newer information
+                // on disk is functionally equivalent — same BLAKE3 id,
+                // same plaintext, decrypts the same way).
+                let _ = std::fs::remove_file(&tmp);
+            }
+            Err(source) => return Err(StorageError::io(path, source)),
+        }
+        // Durability: ensure the directory rename settles. On every
+        // platform we use `open_dir`-style, but fall back gracefully when
+        // the FS doesn't expose it.
+        #[cfg(unix)]
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
         Ok(())
     }
 }
@@ -192,6 +237,34 @@ mod tests {
         assert_eq!(id1.as_bytes(), blake3::hash(&plaintext).as_bytes());
 
         assert_eq!(store.get(&id1).expect("get"), plaintext);
+    }
+
+    #[test]
+    fn concurrent_writes_for_same_blob_succeed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = std::sync::Arc::new(store(dir.path()));
+
+        let plaintext = b"From: a@x\r\n\r\nbandit content for two writers".to_vec();
+        let mut joins = Vec::new();
+        for _ in 0..8 {
+            let store = store.clone();
+            let plaintext = plaintext.clone();
+            joins.push(std::thread::spawn(move || {
+                store.put(&plaintext).expect("concurrent put")
+            }));
+        }
+        let mut ids = joins
+            .into_iter()
+            .map(|j| j.join().expect("join"))
+            .collect::<Vec<_>>();
+        ids.dedup();
+        assert_eq!(ids.len(), 1, "all writers produce the same content address");
+
+        // The resulting file MUST decrypt to the original plaintext. If
+        // a race had overwritten with a different nonce, decryption would
+        // fail or produce garbage bytes.
+        let id = ids[0];
+        assert_eq!(store.get(&id).expect("get"), plaintext);
     }
 
     #[test]

@@ -382,3 +382,23 @@ async fn wrong_account_is_rejected() {
     assert_eq!(responses[0].name(), "error");
     assert_eq!(responses[0].arguments()["type"], "accountNotFound");
 }
+
+#[tokio::test]
+async fn email_query_rejects_unknown_filter_key() {
+    let h = harness().await;
+    let account_id = h.account_id.clone();
+
+    let responses = h.call(json!([
+        ["Email/query", {
+            "accountId": account_id,
+            "filter": {"typo_field": "value", "inMailbox": "ignored"},
+            "limit": 5
+        }, "c1"]
+    ])).await;
+
+    assert_eq!(responses[0].name(), "error");
+    assert_eq!(
+        responses[0].arguments()["type"], "invalidArguments",
+        "got {responses:?}"
+    );
+}
