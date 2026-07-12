@@ -321,6 +321,18 @@ impl McpCtx {
             .map_err(|err| ServiceError::Invalid(err.to_string()))?;
         Ok(json!({"undone": action_id}))
     }
+
+    pub async fn nl_search(
+        &self,
+        _query: &str,
+        limit: usize,
+    ) -> Result<Value, ServiceError> {
+        // TODO: Integrate owney_ai::nl_search::translate_to_filter to convert query to JMAP filter.
+        // For now, return recent emails from inbox (stub implementation).
+        // This demonstrates the MCP tool plumbing; real AI-based translation comes later.
+        // Reuse the existing search method which returns inbox emails.
+        self.search(Some("inbox"), limit).await
+    }
 }
 
 fn compose(from: &str, to: &[String], subject: &str, body: &str) -> Vec<u8> {

@@ -11,6 +11,7 @@
 pub mod provider;
 pub mod skills;
 pub mod worker;
+pub mod nl_search;
 
 use owney_core::AccountId;
 use owney_storage::Storage;

@@ -95,6 +95,14 @@ pub fn tools() -> Value {
             "List recent AI actions taken on this mailbox, each with an undoable flag.",
             json!({"type": "object", "properties": {"limit": {"type": "integer", "default": 20}}})
         ),
+        tool(
+            "nl_search",
+            "Search using natural language. Examples: 'unread from alice', 'important last week', 'drafts with attachment'.",
+            json!({"type": "object", "properties": {
+                "query": {"type": "string", "description": "Natural language search query"},
+                "limit": {"type": "integer", "default": 20, "description": "Max results"},
+            }, "required": ["query"]})
+        ),
         // undo_action is destructive but reversible by definition.
         annotated_tool(
             "undo_action",
@@ -242,6 +250,13 @@ async fn dispatch(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, Servi
             .await
         }
         "get_ai_activity" => ctx.get_ai_activity(usize_arg("limit", 20)).await,
+        "nl_search" => {
+            ctx.nl_search(
+                &require(str_arg("query"), "query")?,
+                usize_arg("limit", 20),
+            )
+            .await
+        }
         "undo_action" => {
             ctx.undo_action(&require(str_arg("actionId"), "actionId")?)
                 .await
