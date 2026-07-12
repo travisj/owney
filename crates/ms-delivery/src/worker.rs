@@ -69,10 +69,22 @@ async fn process_item<R: Router>(
         Err(err) => {
             let attempts = item.attempts as usize;
             match BACKOFF.get(attempts) {
-                Some(delay) => AttemptOutcome::Retry {
-                    error: err.to_string(),
-                    next_attempt: unix_now() + delay,
-                },
+                Some(delay) => {
+                    // ±10% jitter to avoid thundering-herd retries when a relay
+                    // bounces for many senders simultaneously.
+                    let jitter: i64 = {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut h = DefaultHasher::new();
+                        item.id.hash(&mut h);
+                        let frac = (h.finish() % 21) as i64 - 10; // -10..=+10
+                        delay * frac / 100
+                    };
+                    AttemptOutcome::Retry {
+                        error: err.to_string(),
+                        next_attempt: unix_now() + delay + jitter,
+                    }
+                }
                 // Schedule exhausted (~48h of trying).
                 None => AttemptOutcome::Failed {
                     error: format!("retries exhausted: {err}"),

@@ -16,7 +16,10 @@ use rustls::pki_types::{PrivateKeyDer, PrivatePkcs1KeyDer};
 use crate::DeliveryError;
 
 pub const SELECTOR: &str = "ms1";
-const SIGNED_HEADERS: [&str; 7] = [
+
+/// Headers signed on every outbound message (RFC 6376 §5.4 recommended
+/// plus the MIME-transport-protocol set).
+const SIGNED_HEADERS: [&str; 9] = [
     "From",
     "To",
     "Cc",
@@ -24,6 +27,8 @@ const SIGNED_HEADERS: [&str; 7] = [
     "Date",
     "Message-ID",
     "Reply-To",
+    "MIME-Version",
+    "Content-Type",
 ];
 
 /// Per-domain signing key, loaded once at startup.
