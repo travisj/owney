@@ -300,10 +300,15 @@ impl Storage {
     }
 }
 
-/// Find the thread this message belongs to: any existing message in the same
-/// account whose Message-ID appears in this message's References/In-Reply-To,
-/// or whose References contain this message's Message-ID would be handled the
-/// same way on *its* arrival (JMAP threading is forward-linking only for now).
+/// Find the thread this message belongs to: any existing message in the
+/// same account whose Message-ID appears in this message's
+/// `References`/`In-Reply-To` headers.
+///
+/// **Forward linking is not yet implemented.** When an older message in a
+/// thread is sent before us, its `References` would mention a Message-ID
+/// we now own. The full RFC 5536 / JMAP threading spec supports this via a
+/// `References` LIKE match; doing so requires storing parsed references on
+/// `emails`, which is a Phase-N+1 schema change tracked in `docs/PLAN.md`.
 fn resolve_thread(
     conn: &Connection,
     account_id: AccountId,

@@ -5,6 +5,15 @@
 //! crate, and every mutation bumps the per-account modseq for the data types
 //! it touched and publishes a `StateChange` event after commit.** JMAP
 //! `/changes`, push, and client realtime sync are all derived from that.
+//!
+//! ## Backend portability — explicitly *not* abstracted today
+//!
+//! `Storage` is a concrete struct, not a trait. Swapping the SQLite backend
+//! for PostgreSQL or an in-memory test double would touch every call site.
+//! This is a deliberate trade-off: the storage crate is the only place
+//! touching `rusqlite` directly, so the blast radius of a future trait
+//! refactor is bounded to this one crate. Until there is a second backend
+//! worth supporting, the untyped concrete API stays.
 
 mod ai_store;
 mod blob;
