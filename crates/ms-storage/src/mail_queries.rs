@@ -201,6 +201,7 @@ impl Storage {
             .await
     }
 
+
     /// Ids created/updated since a state token, for `Foo/changes`.
     pub async fn changes_since(
         &self,
@@ -385,5 +386,114 @@ impl Storage {
             changed,
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, ms_events::EventBus) {
+        crate::tests::open(tmp.path()).await
+    }
+
+    #[tokio::test]
+    async fn changes_since_buckets_created_vs_updated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+
+        let initial = storage
+            .changes_since(acct.id, DataType::Email, 0, 256)
+            .await
+            .expect("changes");
+        assert_eq!(initial.created.len(), 0);
+        assert_eq!(initial.updated.len(), 0);
+        assert!(!initial.has_more);
+
+        let raw1 = b"From: a@x\r\nMessage-ID: <m1@x>\r\nSubject: one\r\n\r\none\r\n".to_vec();
+        let raw2 = b"From: b@x\r\nMessage-ID: <m2@x>\r\nSubject: two\r\n\r\ntwo\r\n".to_vec();
+        let id1 = storage.ingest_email(acct.id, raw1, "inbox", None).await.expect("ingest1").id;
+        let id2 = storage.ingest_email(acct.id, raw2, "inbox", None).await.expect("ingest2").id;
+
+        let state_after_ingest = storage.state(acct.id, DataType::Email).await.expect("state");
+        let changes = storage
+            .changes_since(acct.id, DataType::Email, 0, 256)
+            .await
+            .expect("changes");
+        assert_eq!(changes.created.len(), 2, "two new emails = created");
+        assert_eq!(changes.updated.len(), 0);
+        assert!(changes.created.contains(&id1.to_string()));
+        assert!(changes.created.contains(&id2.to_string()));
+        assert_eq!(changes.new_state, state_after_ingest);
+
+        let post_create_state = state_after_ingest;
+        storage
+            .update_email(acct.id, id1, Some(vec!["$seen".to_owned()]), None)
+            .await
+            .expect("update");
+
+        // From the *initial* state (since=0), id1 was created in the window
+        // so it lives in `created`. RFC 8620: rows created and then updated
+        // in the same window are still `created` (created_modseq ≤ since is
+        // the bucket discriminator, and created_modseq < updated_modseq for
+        // any newly-created row).
+        let all_changes = storage
+            .changes_since(acct.id, DataType::Email, 0, 256)
+            .await
+            .expect("changes");
+        assert_eq!(all_changes.created.len(), 2, "both emails were created in the window");
+        assert!(all_changes.created.contains(&id1.to_string()));
+        assert_eq!(
+            all_changes.updated.len(),
+            0,
+            "re-checking from since=0: no row was created strictly before the window"
+        );
+
+        // From `post_create_state` (modseq value captured after the two ingests
+        // but before the update), id1 is now an update.
+        let tail = storage
+            .changes_since(acct.id, DataType::Email, post_create_state.0, 256)
+            .await
+            .expect("tail");
+        assert_eq!(tail.created.len(), 0, "no new creates since post-create");
+        assert_eq!(tail.updated.len(), 1);
+        assert_eq!(tail.updated[0], id1.to_string());
+
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn changes_since_has_more_pages_correctly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+
+        for i in 0..5 {
+            let raw = format!(
+                "From: a@x\r\nMessage-ID: <m{i}@x>\r\nSubject: {i}\r\n\r\nbody {i}\r\n"
+            ).into_bytes();
+            storage
+                .ingest_email(acct.id, raw, "inbox", None)
+                .await
+                .expect("ingest");
+        }
+
+        let page1 = storage
+            .changes_since(acct.id, DataType::Email, 0, 2)
+            .await
+            .expect("page1");
+        assert_eq!(page1.created.len(), 2);
+        assert!(page1.has_more, "5 items with max=2 → has_more");
+        assert!(page1.new_state.0 > 0);
+
+        let full = storage
+            .changes_since(acct.id, DataType::Email, 0, 256)
+            .await
+            .expect("full");
+        assert_eq!(full.created.len(), 5);
+        assert!(!full.has_more);
+
+        storage.close();
     }
 }

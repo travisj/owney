@@ -274,7 +274,7 @@ pub(crate) fn unix_now() -> i64 {
 mod tests {
     use super::*;
 
-    async fn open(dir: &Path) -> (Storage, EventBus) {
+    pub(crate) async fn open(dir: &Path) -> (Storage, EventBus) {
         let events = EventBus::new(64);
         let storage = Storage::open(dir, events.clone()).expect("open");
         (storage, events)
