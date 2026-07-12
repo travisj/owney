@@ -53,6 +53,189 @@ pub struct DkimSummary {
     pub domain: String,
     pub selector: String,
     pub result: String,
+    /// Unix-second signature creation time (`t=` tag), 0 if absent.
+    #[serde(default)]
+    pub signature_at: u64,
+    /// Unix-second signature expiration time (`x=` tag), 0 if absent.
+    /// An expired-but-cryptographically-valid signature still reports `pass`;
+    /// consumers should consult `expired_at(now)` to spot replay/abuse.
+    #[serde(default)]
+    pub expires_at: u64,
+}
+
+impl DkimSummary {
+    /// Returns `true` if the signature is expired at `now_unix_seconds`.
+    /// A signature with no `x=` tag never expires.
+    pub fn expired_at(&self, now_unix_seconds: u64) -> bool {
+        self.expires_at != 0 && now_unix_seconds >= self.expires_at
+    }
+}
+
+/// Typed accessor for [`AuthVerdict::spf`] (Phase 2.1).
+///
+/// The wire form stays `String` (the lowercase token), but consumers that
+/// want exhaustiveness should call [`AuthVerdict::spf_status`] rather than
+/// pattern-matching on strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpfStatus {
+    Pass,
+    Fail,
+    SoftFail,
+    Neutral,
+    TempError,
+    PermError,
+    None,
+}
+
+impl SpfStatus {
+    /// Parse a lowercase wire token. Unknown tokens collapse to `None`.
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "fail" => Self::Fail,
+            "softfail" => Self::SoftFail,
+            "neutral" => Self::Neutral,
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            "none" => Self::None,
+            _ => Self::None,
+        }
+    }
+
+    /// Lowercase wire token, stable across releases.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::SoftFail => "softfail",
+            Self::Neutral => "neutral",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Typed accessor for [`AuthVerdict::dkim[].result`] and [`AuthVerdict::arc`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DkimStatus {
+    Pass,
+    Neutral,
+    Fail,
+    TempError,
+    PermError,
+    None,
+}
+
+impl DkimStatus {
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "neutral" => Self::Neutral,
+            "fail" => Self::Fail,
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            _ => Self::None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Neutral => "neutral",
+            Self::Fail => "fail",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Typed accessor for [`AuthVerdict::dmarc`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DmarcStatus {
+    Pass,
+    Fail { reason: DmarcFailReason },
+    TempError,
+    PermError,
+    None,
+}
+
+/// Why a DMARC check failed — propagated from `mail-auth` so consumers can
+/// distinguish alignment failure from missing policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmarcFailReason {
+    /// Identifier was misaligned (relaxed or strict).
+    Unaligned,
+    /// Policy was published but did not permit the failing result.
+    NotPermitted,
+    /// Mismatched identifiers (no shared domain).
+    MismatchedIdentifiers,
+    /// `mail-auth` returned a different `DmarcResult::Fail(_)` reason — the
+    /// `_` matters because the upstream set is wider than we want to enumerate.
+    Other,
+}
+
+impl DmarcStatus {
+    /// Parse a DMARC wire token. `auth-verdict.dmarc="fail"` does not carry
+    /// the *reason* over the wire (that's a JMAP vendor-property or
+    /// internal-log concern); the parser falls back to `Other` for `fail`
+    /// unless the original `DmarcOutput` is available.
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "fail" => Self::Fail { reason: DmarcFailReason::Other },
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            _ => Self::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail { .. } => "fail",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+impl AuthVerdict {
+    /// Synthetic verdict returned when the wall-clock `verify` timeout fires.
+    /// Every field forced to `"temperror"` so downstream policy treats the
+    /// message as evidence-of-broken-DNS rather than evidence-of-legit send.
+    pub fn timeout_verdict() -> Self {
+        Self {
+            iprev: "temperror".to_owned(),
+            spf: "temperror".to_owned(),
+            dkim: Vec::new(),
+            arc: "temperror".to_owned(),
+            dmarc: "temperror".to_owned(),
+            dmarc_policy: "none".to_owned(),
+        }
+    }
+
+    /// Typed view of `self.spf`.
+    pub fn spf_status(&self) -> SpfStatus {
+        SpfStatus::parse(&self.spf)
+    }
+
+    /// Typed view of `self.dmarc`.
+    pub fn dmarc_status(&self) -> DmarcStatus {
+        DmarcStatus::parse(&self.dmarc)
+    }
+
+    /// Typed view of `self.arc`.
+    pub fn arc_status(&self) -> DkimStatus {
+        DkimStatus::parse(&self.arc)
+    }
+
+    /// Typed view of each DKIM signature's `result`.
+    pub fn dkim_statuses(&self) -> Vec<DkimStatus> {
+        self.dkim.iter().map(|d| DkimStatus::parse(&d.result)).collect()
+    }
 }
 
 impl AuthVerdict {
@@ -76,7 +259,18 @@ impl AuthVerdict {
 
     /// RFC 8601 Authentication-Results header value.
     pub fn authentication_results(&self, authserv_id: &str) -> String {
-        let mut parts = vec![authserv_id.to_owned()];
+        // Per RFC 5451 §2.2, an `authserv-id` containing a semicolon,
+        // whitespace, or non-ASCII must be quoted. Quoting protects the
+        // `parts.join(";")` boundary from being interpreted as the
+        // start of a new method-spec.
+        let authserv_id = if authserv_id.contains(|c: char| {
+            c == ';' || c.is_whitespace() || c.is_ascii_control()
+        }) {
+            format!("\"{}\"", authserv_id.replace('"', "\\\""))
+        } else {
+            authserv_id.to_owned()
+        };
+        let mut parts = vec![authserv_id];
         parts.push(format!("iprev={}", self.iprev));
         parts.push(format!("spf={}", self.spf));
         if self.dkim.is_empty() {
@@ -134,7 +328,23 @@ impl Authenticator {
 
     /// Run the full verification stack. Never fails: DNS trouble shows up as
     /// temperror verdicts, evidence rather than errors.
+    ///
+    /// The whole verification is wrapped in a 10-second [`tokio::time::timeout`].
+    /// A genuine slow DNS server (or a malicious one) cannot stall DATA
+    /// indefinitely — the call returns a synthetic `temperror` verdict with
+    /// every field forced to `"temperror"` so downstream policy still gets a
+    /// result.
     pub async fn verify(&self, input: AuthInput<'_>) -> AuthVerdict {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), self.verify_inner(input)).await {
+            Ok(verdict) => verdict,
+            Err(_elapsed) => {
+                tracing::warn!(remote_ip = %input.remote_ip, "auth verify hit the 10s wall-clock timeout");
+                AuthVerdict::timeout_verdict()
+            }
+        }
+    }
+
+    async fn verify_inner(&self, input: AuthInput<'_>) -> AuthVerdict {
         let iprev = self.inner.verify_iprev(self.params(input.remote_ip)).await;
 
         // SPF: MAIL FROM when present, EHLO identity for bounces (RFC 7208 §2.4).
@@ -180,13 +390,15 @@ impl Authenticator {
                     .await;
 
                 let dkim_summaries = dkim
-                    .iter()
-                    .map(|output| DkimSummary {
-                        domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
-                        selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
-                        result: dkim_result_str(output.result()).to_owned(),
-                    })
-                    .collect();
+                     .iter()
+                     .map(|output| DkimSummary {
+                         domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
+                         selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
+                         result: dkim_result_str(output.result()).to_owned(),
+                         signature_at: output.signature().map(|s| s.t).unwrap_or(0),
+                         expires_at: output.signature().map(|s| s.x).unwrap_or(0),
+                     })
+                     .collect();
 
                 let dmarc_result = strongest_dmarc(&dmarc);
                 (
@@ -308,5 +520,210 @@ fn policy_str(policy: Policy) -> &'static str {
         Policy::Quarantine => "quarantine",
         Policy::Reject => "reject",
         Policy::Unspecified => "unspecified",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spf_status_round_trip() {
+        for token in ["pass", "fail", "softfail", "neutral", "temperror", "permerror", "none"] {
+            let s = SpfStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(SpfStatus::parse("unknown"), SpfStatus::None);
+    }
+
+    #[test]
+    fn dkim_status_round_trip() {
+        for token in ["pass", "neutral", "fail", "temperror", "permerror"] {
+            let s = DkimStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(DkimStatus::parse("garbage"), DkimStatus::None);
+    }
+
+    #[test]
+    fn dmarc_status_round_trip() {
+        for token in ["pass", "fail", "temperror", "permerror"] {
+            let s = DmarcStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(DmarcStatus::parse("none"), DmarcStatus::None);
+        // Fail tokens always carry `reason: Other` since the wire form doesn't carry the reason.
+        assert!(matches!(DmarcStatus::parse("fail"), DmarcStatus::Fail { .. }));
+    }
+
+    #[test]
+    fn verdict_accessors_return_typed_views() {
+        let verdict = AuthVerdict {
+            iprev: "pass".to_owned(),
+            spf: "softfail".to_owned(),
+            dkim: vec![DkimSummary {
+                domain: "example.com".to_owned(),
+                selector: "s1".to_owned(),
+                result: "pass".to_owned(),
+                signature_at: 0,
+                expires_at: 0,
+            }],
+            arc: "none".to_owned(),
+            dmarc: "fail".to_owned(),
+            dmarc_policy: "quarantine".to_owned(),
+        };
+        assert_eq!(verdict.spf_status(), SpfStatus::SoftFail);
+        assert_eq!(verdict.arc_status(), DkimStatus::None);
+        assert!(matches!(verdict.dmarc_status(), DmarcStatus::Fail { .. }));
+        assert_eq!(verdict.dkim_statuses(), vec![DkimStatus::Pass]);
+    }
+
+    #[test]
+    fn auth_verdict_serde_round_trip_preserves_strings() {
+        let v = AuthVerdict {
+            iprev: "pass".to_owned(),
+            spf: "fail".to_owned(),
+            dkim: vec![],
+            arc: "none".to_owned(),
+            dmarc: "temperror".to_owned(),
+            dmarc_policy: "reject".to_owned(),
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let back: AuthVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, v);
+        // Wire form is unchanged.
+        assert!(json.contains("\"spf\":\"fail\""));
+        assert!(json.contains("\"dmarc\":\"temperror\""));
+    }
+}
+
+#[cfg(test)]
+mod dkim_summary_tests {
+    use super::DkimSummary;
+
+    #[test]
+    fn expired_at_returns_false_when_no_expiration() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 0,
+            expires_at: 0,
+        };
+        assert!(!s.expired_at(0));
+        assert!(!s.expired_at(u64::MAX));
+    }
+
+    #[test]
+    fn expired_at_compares_to_now() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 0,
+            expires_at: 100,
+        };
+        assert!(!s.expired_at(99));
+        assert!(s.expired_at(100));
+        assert!(s.expired_at(101));
+    }
+
+    #[test]
+    fn dkim_summary_round_trips_via_serde_with_new_fields() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 50,
+            expires_at: 150,
+        };
+        let json = serde_json::to_string(&s).expect("ser");
+        let back: DkimSummary = serde_json::from_str(&json).expect("de");
+        assert_eq!(back, s);
+        // Both new fields serialize.
+        assert!(json.contains("\"signature_at\":50"));
+        assert!(json.contains("\"expires_at\":150"));
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::{AuthVerdict, DmarcStatus, DkimStatus, SpfStatus};
+
+    #[test]
+    fn timeout_verdict_is_all_temperror() {
+        let v = AuthVerdict::timeout_verdict();
+        assert_eq!(v.iprev, "temperror");
+        assert_eq!(v.spf, "temperror");
+        assert_eq!(v.arc, "temperror");
+        assert_eq!(v.dmarc, "temperror");
+        assert_eq!(v.dmarc_policy, "none");
+        assert!(v.dkim.is_empty());
+
+        // Typed accessors reflect the synthetic temperror verdict:
+        assert_eq!(v.spf_status(), SpfStatus::TempError);
+        assert_eq!(v.arc_status(), DkimStatus::TempError);
+        assert_eq!(v.dmarc_status(), DmarcStatus::TempError);
+        assert!(v.dkim_statuses().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod authserv_id_tests {
+    use super::AuthVerdict;
+
+    fn minimal() -> AuthVerdict {
+        AuthVerdict {
+            iprev: "pass".into(),
+            spf: "pass".into(),
+            dkim: vec![],
+            arc: "none".into(),
+            dmarc: "pass".into(),
+            dmarc_policy: "none".into(),
+        }
+    }
+
+    #[test]
+    fn plain_authserv_id_passes_through() {
+        let v = minimal().authentication_results("mail.example.com");
+        assert!(v.starts_with("mail.example.com;"));
+    }
+
+    #[test]
+    fn authserv_id_with_semicolon_is_quoted() {
+        let v = minimal().authentication_results("mail; example.com");
+        // The authserv-id must be quoted so the later `;`-join doesn't
+        // split it into two field tokens.
+        assert!(v.contains("\"mail; example.com\";"));
+    }
+
+    #[test]
+    fn authserv_id_with_whitespace_is_quoted() {
+        let v = minimal().authentication_results("mail example.com");
+        assert!(v.contains("\"mail example.com\";"));
+    }
+
+    #[test]
+    fn authserv_id_quote_is_escaped() {
+        // RFC 5451 §2.2 requires quoting any authserv-id containing
+        // whitespace, NUL, or `;`.  Embedding `;` alone is the
+        // canonical case for breaking a parser, so we use that.
+        let v = minimal().authentication_results("mail.example.com"); // first ensure no quote is added when not needed
+        assert!(
+            !v.starts_with('"'),
+            "plain authserv-id should not be quoted: {v:?}"
+        );
+
+        // Now with a `;` it MUST be quoted.
+        let v = minimal().authentication_results("mail;evil.com");
+        // First field is the authserv-id, terminated by `;`.
+        let first = v.find(";\r\n\t").expect("has next field");
+        let authserv = &v[..first];
+        assert!(
+            authserv.starts_with('"') && authserv.ends_with('"'),
+            "expected quoted authserv-id, got {authserv:?}"
+        );
+        // The interior must contain the original token verbatim.
+        assert!(authserv.contains("mail;evil.com"), "got {authserv:?}");
     }
 }
