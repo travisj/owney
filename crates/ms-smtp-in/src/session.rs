@@ -337,7 +337,17 @@ impl<H: MailHandler> Session<H> {
 
     /// Handle a command-parse error. Returns false when the connection should
     /// be dropped for abuse.
+    ///
+    /// `SmtpError::ResponseTooLong` is a *connection-closing offense*: a
+    /// client persistently emitting lines that exceed the configured
+    /// limit is either broken or hostile. We drop immediately rather
+    /// than increment-and-wait for the error counter to catch up,
+    /// which a determined attacker can drag out.
     fn protocol_error(&mut self, err: SmtpError, out: &mut Vec<u8>) -> bool {
+        if matches!(err, SmtpError::ResponseTooLong) {
+            reply(out, "500 5.5.2 line too long, closing");
+            return false;
+        }
         self.errors += 1;
         if self.errors >= self.params.max_errors {
             reply(out, "421 4.7.0 too many errors, closing");
