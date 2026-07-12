@@ -6,15 +6,19 @@ use owney_authn::{AuthInput, Authenticator};
 use owney_events::EventBus;
 use owney_smtp_in::{DeliverError, InboundMail, MailHandler, RcptVerdict};
 use owney_storage::Storage;
+use owney_spam::{SpamInput, SpamScanner};
 
 pub struct ServerCore {
     pub storage: Arc<Storage>,
     pub authenticator: Arc<Authenticator>,
+    pub spam_scanner: Box<dyn SpamScanner>,
     pub events: EventBus,
     /// The domain we accept mail for.
     pub domain: String,
     /// Our hostname (authserv-id in Authentication-Results).
     pub hostname: String,
+    /// Spam filtering config
+    pub spam_config: owney_core::config::SpamConfig,
 }
 
 impl MailHandler for ServerCore {
@@ -50,6 +54,25 @@ impl MailHandler for ServerCore {
             .await;
         let verdict_json = serde_json::to_string(&verdict).ok();
 
+        // Spam filtering: check message before routing to recipients
+        let spam_verdict = if self.spam_config.enabled {
+            self.spam_scanner.scan(&self.storage, SpamInput {
+                remote_ip: mail.remote,
+                raw: &mail.raw,
+                account_id: owney_core::AccountId::new(), // Temp default; will use actual account per-recipient
+            }).await
+        } else {
+            owney_spam::SpamVerdict::default()
+        };
+
+        // Check for permanent spam rejection
+        if spam_verdict.score >= self.spam_config.reject_threshold {
+            tracing::warn!(score = spam_verdict.score, rules = ?spam_verdict.matched_rules, "message rejected by spam filter");
+            return Err(DeliverError::Permanent(format!("message rejected: spam score {:.2}", spam_verdict.score)));
+        }
+
+        let spam_verdict_json = serde_json::to_string(&spam_verdict).ok();
+
         // Record our verdict in the message itself (RFC 8601).
         let mut raw = format!(
             "Authentication-Results: {}\r\n",
@@ -79,11 +102,24 @@ impl MailHandler for ServerCore {
                 tracing::warn!(%address, account = %account.email, "peer PGP key changed");
             }
 
+            // Route to Junk if spam quarantine threshold exceeded, otherwise inbox
+            let mailbox = if spam_verdict.score >= self.spam_config.quarantine_threshold {
+                "junk"
+            } else {
+                "inbox"
+            };
+
             let ingested = self
                 .storage
-                .ingest_email(account.id, pgp.raw, "inbox", verdict_json.clone())
+                .ingest_email(account.id, pgp.raw, mailbox, verdict_json.clone())
                 .await
                 .map_err(|err| DeliverError::Temporary(err.to_string()))?;
+
+            // Store spam verdict
+            if let Some(spam_json) = &spam_verdict_json {
+                let _ = self.storage.set_spam_verdict(&ingested.id.to_string(), spam_json).await;
+            }
+
             if let Some(status) = &pgp.pgp_status {
                 self.storage
                     .set_pgp_status(ingested.id, status)
@@ -97,6 +133,8 @@ impl MailHandler for ServerCore {
                 from = %mail.mail_from,
                 encrypted = pgp.pgp_status.is_some(),
                 auth = %verdict.summary(),
+                spam_score = spam_verdict.score,
+                mailbox = mailbox,
                 "message delivered"
             );
         }

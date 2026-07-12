@@ -497,12 +497,21 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     });
 
     // Inbound SMTP listeners.
+    let spam_scanner: Box<dyn owney_spam::SpamScanner> = if config.spam.enabled {
+        Box::new(owney_spam::HeuristicScanner::new(config.spam.dnsbl_zones.clone()))
+    } else {
+        // Stub scanner that always returns clean verdict
+        Box::new(owney_spam::HeuristicScanner::new(Vec::new()))
+    };
+
     let core = Arc::new(ServerCore {
         storage: storage.clone(),
         authenticator: Arc::new(owney_authn::Authenticator::new(config.server.hostname.clone())),
+        spam_scanner,
         events: events.clone(),
         domain: config.server.domain.clone(),
         hostname: config.server.hostname.clone(),
+        spam_config: config.spam.clone(),
     });
     let mut params = owney_smtp_in::SmtpParams::from_config(&config);
     if let Some(tls) = &config.tls {

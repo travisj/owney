@@ -29,6 +29,8 @@ pub struct Config {
     #[serde(default)]
     pub imap: ImapConfig,
     #[serde(default)]
+    pub spam: SpamConfig,
+    #[serde(default)]
     pub log: LogConfig,
 }
 
@@ -74,6 +76,30 @@ impl Default for ImapConfig {
         Self {
             listen: "127.0.0.1:143".to_owned(),
             enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SpamConfig {
+    /// Enable spam filtering (default true).
+    pub enabled: bool,
+    /// Score threshold for permanent rejection (550 at end-of-DATA). Default 0.9.
+    pub reject_threshold: f32,
+    /// Score threshold for quarantine to Junk mailbox. Default 0.7.
+    pub quarantine_threshold: f32,
+    /// DNSBL zones to check (e.g., ["zen.spamhaus.org"]).
+    pub dnsbl_zones: Vec<String>,
+}
+
+impl Default for SpamConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            reject_threshold: 0.9,
+            quarantine_threshold: 0.7,
+            dnsbl_zones: vec!["zen.spamhaus.org".to_owned()],
         }
     }
 }
@@ -285,6 +311,16 @@ provider = "claude"
 model = "claude-haiku-4-5-20251001"
 base_url = "http://127.0.0.1:11434"
 api_key_env = "ANTHROPIC_API_KEY"
+
+[spam]
+# In-process spam filtering (DNSBL + heuristics + per-account Bayes).
+enabled = true
+# Score threshold for permanent rejection (550 at end-of-DATA).
+reject_threshold = 0.9
+# Score threshold for quarantine to Junk mailbox.
+quarantine_threshold = 0.7
+# DNSBL zones to check (reverse-octet A-record lookups).
+dnsbl_zones = ["zen.spamhaus.org"]
 
 [log]
 # Log filter, e.g. "info" or "owney_smtp_in=debug,info".

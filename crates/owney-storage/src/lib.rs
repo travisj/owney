@@ -26,6 +26,7 @@ mod mail_queries;
 mod migrations;
 mod pgp_store;
 mod queue;
+mod spam_store;
 mod tokens;
 
 use std::path::{Path, PathBuf};

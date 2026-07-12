@@ -211,6 +211,19 @@ const MIGRATIONS: &[&str] = &[
     ) STRICT;
     CREATE INDEX aliases_by_account ON aliases (account_id, active) WHERE active = 1;
     "#,
+    // 9 -> 10: Spam filtering verdicts per message.
+    // Stores the result of spam scanning (DNSBL hits, heuristic score, Bayes probability).
+    // Same pattern as auth_results: JSON string for flexibility.
+    r#"
+    ALTER TABLE emails ADD COLUMN spam_results TEXT;
+    CREATE TABLE spam_tokens (
+        account_id  TEXT NOT NULL REFERENCES accounts(id),
+        token       TEXT NOT NULL,
+        spam_count  INTEGER NOT NULL DEFAULT 0,
+        ham_count   INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (account_id, token)
+    ) STRICT, WITHOUT ROWID;
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {
