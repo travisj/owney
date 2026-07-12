@@ -169,6 +169,26 @@ const MIGRATIONS: &[&str] = &[
         last_modseq INTEGER NOT NULL
     ) STRICT, WITHOUT ROWID;
     "#,
+    // 6 -> 7: DMARC reporting. Stores aggregate reports (RFC 7489)
+    // for visibility into email deliverability and authentication.
+    r#"
+    CREATE TABLE dmarc_reports (
+        id                TEXT PRIMARY KEY,
+        account_id        TEXT NOT NULL REFERENCES accounts(id),
+        received_at       INTEGER NOT NULL,
+        reporter          TEXT NOT NULL,
+        domain            TEXT NOT NULL,
+        date_range_start  INTEGER NOT NULL,
+        date_range_end    INTEGER NOT NULL,
+        dmarc_pass_count  INTEGER NOT NULL DEFAULT 0,
+        dmarc_fail_count  INTEGER NOT NULL DEFAULT 0,
+        policy_sent       TEXT,
+        policy_evaluated  TEXT,
+        raw_json          TEXT,
+        created_at        INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX dmarc_reports_by_domain ON dmarc_reports (account_id, domain, received_at DESC);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {
