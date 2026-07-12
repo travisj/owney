@@ -55,6 +55,159 @@ pub struct DkimSummary {
     pub result: String,
 }
 
+/// Typed accessor for [`AuthVerdict::spf`] (Phase 2.1).
+///
+/// The wire form stays `String` (the lowercase token), but consumers that
+/// want exhaustiveness should call [`AuthVerdict::spf_status`] rather than
+/// pattern-matching on strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpfStatus {
+    Pass,
+    Fail,
+    SoftFail,
+    Neutral,
+    TempError,
+    PermError,
+    None,
+}
+
+impl SpfStatus {
+    /// Parse a lowercase wire token. Unknown tokens collapse to `None`.
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "fail" => Self::Fail,
+            "softfail" => Self::SoftFail,
+            "neutral" => Self::Neutral,
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            "none" => Self::None,
+            _ => Self::None,
+        }
+    }
+
+    /// Lowercase wire token, stable across releases.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::SoftFail => "softfail",
+            Self::Neutral => "neutral",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Typed accessor for [`AuthVerdict::dkim[].result`] and [`AuthVerdict::arc`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DkimStatus {
+    Pass,
+    Neutral,
+    Fail,
+    TempError,
+    PermError,
+    None,
+}
+
+impl DkimStatus {
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "neutral" => Self::Neutral,
+            "fail" => Self::Fail,
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            _ => Self::None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Neutral => "neutral",
+            Self::Fail => "fail",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Typed accessor for [`AuthVerdict::dmarc`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DmarcStatus {
+    Pass,
+    Fail { reason: DmarcFailReason },
+    TempError,
+    PermError,
+    None,
+}
+
+/// Why a DMARC check failed — propagated from `mail-auth` so consumers can
+/// distinguish alignment failure from missing policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmarcFailReason {
+    /// Identifier was misaligned (relaxed or strict).
+    Unaligned,
+    /// Policy was published but did not permit the failing result.
+    NotPermitted,
+    /// Mismatched identifiers (no shared domain).
+    MismatchedIdentifiers,
+    /// `mail-auth` returned a different `DmarcResult::Fail(_)` reason — the
+    /// `_` matters because the upstream set is wider than we want to enumerate.
+    Other,
+}
+
+impl DmarcStatus {
+    /// Parse a DMARC wire token. `auth-verdict.dmarc="fail"` does not carry
+    /// the *reason* over the wire (that's a JMAP vendor-property or
+    /// internal-log concern); the parser falls back to `Other` for `fail`
+    /// unless the original `DmarcOutput` is available.
+    pub fn parse(token: &str) -> Self {
+        match token {
+            "pass" => Self::Pass,
+            "fail" => Self::Fail { reason: DmarcFailReason::Other },
+            "temperror" => Self::TempError,
+            "permerror" => Self::PermError,
+            _ => Self::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail { .. } => "fail",
+            Self::TempError => "temperror",
+            Self::PermError => "permerror",
+            Self::None => "none",
+        }
+    }
+}
+
+impl AuthVerdict {
+    /// Typed view of `self.spf`.
+    pub fn spf_status(&self) -> SpfStatus {
+        SpfStatus::parse(&self.spf)
+    }
+
+    /// Typed view of `self.dmarc`.
+    pub fn dmarc_status(&self) -> DmarcStatus {
+        DmarcStatus::parse(&self.dmarc)
+    }
+
+    /// Typed view of `self.arc`.
+    pub fn arc_status(&self) -> DkimStatus {
+        DkimStatus::parse(&self.arc)
+    }
+
+    /// Typed view of each DKIM signature's `result`.
+    pub fn dkim_statuses(&self) -> Vec<DkimStatus> {
+        self.dkim.iter().map(|d| DkimStatus::parse(&d.result)).collect()
+    }
+}
+
 impl AuthVerdict {
     /// A compact `Authentication-Results`-style single line for logs and the
     /// stored header.
@@ -308,5 +461,77 @@ fn policy_str(policy: Policy) -> &'static str {
         Policy::Quarantine => "quarantine",
         Policy::Reject => "reject",
         Policy::Unspecified => "unspecified",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spf_status_round_trip() {
+        for token in ["pass", "fail", "softfail", "neutral", "temperror", "permerror", "none"] {
+            let s = SpfStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(SpfStatus::parse("unknown"), SpfStatus::None);
+    }
+
+    #[test]
+    fn dkim_status_round_trip() {
+        for token in ["pass", "neutral", "fail", "temperror", "permerror"] {
+            let s = DkimStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(DkimStatus::parse("garbage"), DkimStatus::None);
+    }
+
+    #[test]
+    fn dmarc_status_round_trip() {
+        for token in ["pass", "fail", "temperror", "permerror"] {
+            let s = DmarcStatus::parse(token);
+            assert_eq!(s.as_str(), token, "round-trip {token}");
+        }
+        assert_eq!(DmarcStatus::parse("none"), DmarcStatus::None);
+        // Fail tokens always carry `reason: Other` since the wire form doesn't carry the reason.
+        assert!(matches!(DmarcStatus::parse("fail"), DmarcStatus::Fail { .. }));
+    }
+
+    #[test]
+    fn verdict_accessors_return_typed_views() {
+        let verdict = AuthVerdict {
+            iprev: "pass".to_owned(),
+            spf: "softfail".to_owned(),
+            dkim: vec![DkimSummary {
+                domain: "example.com".to_owned(),
+                selector: "s1".to_owned(),
+                result: "pass".to_owned(),
+            }],
+            arc: "none".to_owned(),
+            dmarc: "fail".to_owned(),
+            dmarc_policy: "quarantine".to_owned(),
+        };
+        assert_eq!(verdict.spf_status(), SpfStatus::SoftFail);
+        assert_eq!(verdict.arc_status(), DkimStatus::None);
+        assert!(matches!(verdict.dmarc_status(), DmarcStatus::Fail { .. }));
+        assert_eq!(verdict.dkim_statuses(), vec![DkimStatus::Pass]);
+    }
+
+    #[test]
+    fn auth_verdict_serde_round_trip_preserves_strings() {
+        let v = AuthVerdict {
+            iprev: "pass".to_owned(),
+            spf: "fail".to_owned(),
+            dkim: vec![],
+            arc: "none".to_owned(),
+            dmarc: "temperror".to_owned(),
+            dmarc_policy: "reject".to_owned(),
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let back: AuthVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, v);
+        // Wire form is unchanged.
+        assert!(json.contains("\"spf\":\"fail\""));
+        assert!(json.contains("\"dmarc\":\"temperror\""));
     }
 }
