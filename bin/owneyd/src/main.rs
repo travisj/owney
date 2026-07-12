@@ -162,6 +162,29 @@ enum AdminCommand {
         #[arg(long)]
         confirm: bool,
     },
+    /// Create an email alias for an account.
+    CreateAlias {
+        /// The account email.
+        account: String,
+        /// The alias email address (e.g., alice+shopping@example.com).
+        alias: String,
+        /// Optional label for the alias (e.g., "shopping").
+        #[arg(long)]
+        label: Option<String>,
+        /// Expiration in days (None = permanent).
+        #[arg(long)]
+        expires_in_days: Option<u32>,
+    },
+    /// List aliases for an account.
+    ListAliases {
+        /// The account email.
+        email: String,
+    },
+    /// Deactivate an alias.
+    DeactivateAlias {
+        /// The alias email to deactivate.
+        alias: String,
+    },
     /// Print the DKIM DNS record to publish for this domain.
     DkimRecord,
     /// Show the AI activity feed for an account.
@@ -986,6 +1009,94 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .await
                 .context("deleting account")?;
             println!("permanently deleted account {} and all associated data", account.email);
+            Ok(())
+        }
+        AdminCommand::CreateAlias { account, alias, label, expires_in_days } => {
+            anyhow::ensure!(
+                account.ends_with(&format!("@{}", config.server.domain)),
+                "{account} is not under this server's domain ({})",
+                config.server.domain
+            );
+            anyhow::ensure!(
+                alias.ends_with(&format!("@{}", config.server.domain)),
+                "{alias} is not under this server's domain ({})",
+                config.server.domain
+            );
+            let acc = storage
+                .account_by_email(&account)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {account}"))?;
+
+            let expires_at = expires_in_days.map(|days| {
+                unix_now() + (days as i64 * 86400)
+            });
+
+            let alias_record = storage
+                .create_alias(acc.id, &alias, label.as_deref(), expires_at)
+                .await
+                .context("creating alias")?;
+
+            let expires_str = if let Some(ts) = alias_record.expires_at {
+                format!(" (expires: {})", owney_core::time::rfc2822_utc(ts))
+            } else {
+                " (permanent)".to_string()
+            };
+            println!("created alias {}{}", alias_record.alias_email, expires_str);
+            Ok(())
+        }
+        AdminCommand::ListAliases { email } => {
+            anyhow::ensure!(
+                email.ends_with(&format!("@{}", config.server.domain)),
+                "{email} is not under this server's domain ({})",
+                config.server.domain
+            );
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+
+            let aliases = storage
+                .list_aliases_for_account(account.id)
+                .await
+                .context("listing aliases")?;
+
+            if aliases.is_empty() {
+                println!("no active aliases for {}", account.email);
+            } else {
+                println!("aliases for {}:", account.email);
+                for alias in aliases {
+                    let expires_str = if let Some(ts) = alias.expires_at {
+                        format!(" (expires: {})", owney_core::time::rfc2822_utc(ts))
+                    } else {
+                        " (permanent)".to_string()
+                    };
+                    let label_str = alias.label.as_ref().map(|l| format!(" [{}]", l)).unwrap_or_default();
+                    println!("  {}{}{}", alias.alias_email, label_str, expires_str);
+                }
+            }
+            Ok(())
+        }
+        AdminCommand::DeactivateAlias { alias } => {
+            anyhow::ensure!(
+                alias.ends_with(&format!("@{}", config.server.domain)),
+                "{alias} is not under this server's domain ({})",
+                config.server.domain
+            );
+
+            // Find the alias by email to get its ID
+            let alias_id = storage
+                .find_alias_id(&alias)
+                .await
+                .context("looking up alias")?
+                .with_context(|| format!("no alias {}", alias))?;
+
+            storage
+                .deactivate_alias(&alias_id)
+                .await
+                .context("deactivating alias")?;
+            println!("deactivated alias {}", alias);
             Ok(())
         }
         AdminCommand::DkimRecord => {

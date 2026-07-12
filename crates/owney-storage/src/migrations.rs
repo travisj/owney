@@ -195,6 +195,22 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE accounts ADD COLUMN disabled_at INTEGER;
     "#,
+    // 8 -> 9: Email aliases (permanent and temporary).
+    // Maps alias_email (e.g., alice+shopping@example.com) to an owner account.
+    // Supports expiration (user-set TTL or manual deactivation).
+    // Mail to alias lands in owner's mailbox; Identity/get lists all active aliases as send-as identities.
+    r#"
+    CREATE TABLE aliases (
+        id          TEXT PRIMARY KEY,
+        account_id  TEXT NOT NULL REFERENCES accounts(id),
+        alias_email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        label       TEXT,
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER,          -- NULL = permanent; set to unix timestamp for expiration
+        active      INTEGER NOT NULL DEFAULT 1
+    ) STRICT;
+    CREATE INDEX aliases_by_account ON aliases (account_id, active) WHERE active = 1;
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

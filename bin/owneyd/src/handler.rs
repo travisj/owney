@@ -26,7 +26,7 @@ impl MailHandler for ServerCore {
         if domain != self.domain {
             return RcptVerdict::NotLocal;
         }
-        match self.storage.account_by_email(&address).await {
+        match self.storage.resolve_recipient(&address).await {
             Ok(Some(_)) => RcptVerdict::Accept,
             Ok(None) => RcptVerdict::UnknownUser,
             Err(err) => {
@@ -61,7 +61,7 @@ impl MailHandler for ServerCore {
         for recipient in &mail.recipients {
             let account = self
                 .storage
-                .account_by_email(recipient)
+                .resolve_recipient(recipient)
                 .await
                 .map_err(|err| DeliverError(err.to_string()))?
                 .ok_or_else(|| DeliverError(format!("{recipient} vanished after RCPT")))?;

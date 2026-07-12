@@ -16,6 +16,7 @@
 //! worth supporting, the untyped concrete API stays.
 
 mod ai_store;
+mod aliases;
 mod blob;
 mod db;
 mod error;
@@ -35,6 +36,7 @@ use owney_events::{Event, EventBus};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub use ai_store::AiAction;
+pub use aliases::Alias;
 pub use blob::BlobStore;
 pub use db::Db;
 pub use error::StorageError;
