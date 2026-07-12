@@ -6,6 +6,11 @@
 //! context type of their choosing; data types (RFC 8621 mail, etc.) live in
 //! the embedder.
 //!
+//! # Overview
+//!
+//! [`Dispatcher`] is the main entry point. Create one, register method handlers,
+//! and call [`Dispatcher::process`] to handle JMAP requests.
+//!
 //! ```
 //! # use jmap_core::{Dispatcher, envelope::MethodError};
 //! # use serde_json::json;
@@ -27,6 +32,84 @@
 //! # });
 //! # }
 //! ```
+//!
+//! # Request Flow
+//!
+//! The dispatcher processes JMAP requests through these stages:
+//!
+//! 1. **Validation** ([`Request`]): Verify the `using` capability list is non-empty,
+//!    has no duplicates, and all capabilities are registered. Reject if any limit
+//!    is exceeded (e.g., too many method calls).
+//!
+//! 2. **Dispatch**: For each method call in `methodCalls`:
+//!    - Resolve any result references (`#key` arguments) to prior responses
+//!      (see [`refs::resolve_references`]).
+//!    - Look up the handler for the method name.
+//!    - Call the handler with the resolved arguments and context.
+//!    - Collect the result or error.
+//!
+//! 3. **Response Assembly** ([`Response`]): Build the response envelope with
+//!    all method responses, session state, and any echoed `createdIds`.
+//!
+//! # The Generic Context Type (Ctx)
+//!
+//! Every handler receives an `Arc<Ctx>`, where `Ctx` is your own type. Use it
+//! to carry:
+//! - Authenticated user ID
+//! - Database connections
+//! - Rate limiters
+//! - Tracing spans
+//! - Feature flags
+//! - Anything needed during request processing
+//!
+//! Example:
+//!
+//! ```ignore
+//! #[derive(Clone)]
+//! struct MyContext {
+//!     user_id: String,
+//!     db: Arc<Database>,
+//!     rate_limiter: Arc<RateLimiter>,
+//! }
+//!
+//! let mut dispatcher: Dispatcher<MyContext> = Dispatcher::new("v1");
+//! dispatcher.register("Email/query", "urn:ietf:params:jmap:mail", |args, ctx| async move {
+//!     // ctx.user_id, ctx.db, ctx.rate_limiter available here
+//!     let account_id = args["accountId"].as_str().unwrap();
+//!     ctx.db.query_emails(account_id, args).await
+//! });
+//! ```
+//!
+//! # Errors
+//!
+//! Two error types map to different response levels:
+//!
+//! - [`envelope::RequestError`]: Fails the entire request (RFC 8620 §3.6.1).
+//!   Errors like unknown capability or exceeding limits.
+//!   Returned as RFC 7807 problem-details with HTTP status 400.
+//!
+//! - [`envelope::MethodError`]: Fails a single method call (RFC 8620 §3.6.2).
+//!   Appears inline in `methodResponses` as `["error", {type, description?}, callId]`.
+//!   Returned as an [`Invocation`] with name `"error"`.
+//!
+//! # Panic Safety
+//!
+//! If a handler panics, the dispatcher catches it, logs it, and surfaces it
+//! to the client as `MethodError::ServerFail`. Subsequent method calls in the
+//! same request still execute.
+//!
+//! # Timeout Safety
+//!
+//! If [`Limits::max_call_duration`] is set, handlers that exceed it are
+//! cancelled and return `MethodError::ServerFail` with a timeout message.
+//! Ensure your handlers properly clean up on cancellation (use RAII guards).
+//!
+//! # Module Organization
+//!
+//! - [`envelope`]: Wire-level request/response types and method/request errors.
+//! - [`refs`]: Result reference resolution (RFC 8620 §3.7).
+//! - [`session`]: Session object construction (RFC 8620 §2).
+//! - [`Dispatcher`] (this module): Method registration and request processing.
 
 pub mod envelope;
 pub mod refs;

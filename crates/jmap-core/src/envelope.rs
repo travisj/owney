@@ -1,18 +1,82 @@
 //! The JMAP request/response envelope (RFC 8620 §3).
 //!
-//! - [`Request`] is the wire-level request type. Its `using` field
-//!   lists the capability URNs the request uses; `method_calls` is a
-//!   parallel array of [`Invocation`]s.
-//! - [`Response`] is the wire-level response. Its `method_responses`
-//!   is a parallel array of [`Invocation`]s; the `created_ids`
-//!   field, if present, echoes the client's `createdIds` map
-//!   unchanged (RFC 8620 §3.6.1).
-//! - [`RequestError`] is a request-level error and maps to an
-//!   RFC 7807 problem-details body and HTTP 400 (see
-//!   [`RequestError::problem_details`]).
-//! - [`MethodError`] is a method-level error. It appears inline in
-//!   `methodResponses` as `["error", {type, description?}, callId]`
-//!   (RFC 8620 §3.6.2).
+//! This module defines the wire-level types for JMAP requests and responses,
+//! plus the error types that map to different HTTP and protocol responses.
+//!
+//! # Request & Response
+//!
+//! - [`Request`] is the wire-level request type (RFC 8620 §3.1).
+//!   - `using`: A list of capability URNs the client intends to use.
+//!   - `method_calls`: A parallel array of [`Invocation`]s (method name,
+//!     arguments, call ID).
+//!   - `created_ids`: (Optional) A map of call ID to server-generated IDs
+//!     to be echoed back in the response (RFC 8620 §3.6.1).
+//!
+//! - [`Response`] is the wire-level response type (RFC 8620 §3.2).
+//!   - `method_responses`: A parallel array of [`Invocation`]s, one per call.
+//!     If a call failed, the invocation name is `"error"` (see [`MethodError`]).
+//!   - `created_ids`: (Optional, if the request provided it) echoed unchanged.
+//!   - `session_state`: An opaque token. If this changes between requests,
+//!     clients should refetch the session via `GET /.well-known/jmap`.
+//!
+//! # Request vs. Method Errors
+//!
+//! - [`RequestError`]: Fails the entire request at the HTTP level (RFC 8620 §3.6.1).
+//!   Returned as RFC 7807 problem-details with HTTP 400.
+//!   - Unknown capability in `using`
+//!   - Malformed request structure
+//!   - Server limit exceeded (maxCallsInRequest, etc.)
+//!
+//! - [`MethodError`]: Fails a single method call (RFC 8620 §3.6.2).
+//!   Appears inline in `methodResponses` as:
+//!   ```json
+//!   ["error", {
+//!     "type": "unknownMethod",
+//!     "description": "..."  // optional, only for some types
+//!   }, "call-id"]
+//!   ```
+//!
+//! # Invocation
+//!
+//! [`Invocation`] is a `[name, arguments, callId]` triple that appears
+//! in both `methodCalls` (request) and `methodResponses` (response).
+//! In responses, if the method call failed, `name` is `"error"` and
+//! `arguments` is the error object.
+//!
+//! # Example Flow
+//!
+//! Client sends:
+//! ```json
+//! {
+//!   "using": ["urn:ietf:params:jmap:core"],
+//!   "methodCalls": [
+//!     ["Ping/ping", {"clientData": 42}, "c1"],
+//!     ["Core/echo", {"hello": "world"}, "c2"]
+//!   ]
+//! }
+//! ```
+//!
+//! Server responds:
+//! ```json
+//! {
+//!   "methodResponses": [
+//!     ["Ping/ping", {"pong": true}, "c1"],
+//!     ["Core/echo", {"hello": "world"}, "c2"]
+//!   ],
+//!   "sessionState": "s42"
+//! }
+//! ```
+//!
+//! If `Ping/ping` fails:
+//! ```json
+//! {
+//!   "methodResponses": [
+//!     ["error", {"type": "serverFail", "description": "..."}, "c1"],
+//!     ["Core/echo", {"hello": "world"}, "c2"]
+//!   ],
+//!   "sessionState": "s42"
+//! }
+//! ```
 
 use std::collections::BTreeMap;
 

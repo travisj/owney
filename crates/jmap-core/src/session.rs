@@ -1,16 +1,116 @@
-//! The JMAP session object (RFC 8620 §2), served at `/.well-known/jmap`.
+//! The JMAP session object (RFC 8620 §2): client discovery.
 //!
-//! [`Session`] is what clients `GET` to discover a server's
-//! capabilities, accounts, and URLs. [`Session::for_account`] builds
-//! the single-account shape; servers that support more than one
-//! account build [`Session`] directly. URL templates use
-//! `{placeholder}` syntax that the client fills in (e.g. `{accountId}`,
-//! `{blobId}`, `{name}`); see RFC 8620 §2 for the complete list.
+//! Clients fetch the session object via `GET /.well-known/jmap` to discover:
+//! - Server capabilities and their properties
+//! - Available accounts and per-account capabilities
+//! - Endpoint URLs (JMAP API, upload, download, etc.)
+//! - Server session state
 //!
-//! [`SessionAccount`] describes one account and the per-account
-//! capabilities it advertises. By convention the core capability
-//! (`urn:ietf:params:jmap:core`) does NOT appear in
-//! `accountCapabilities` — every account implicitly supports it.
+//! # Session Object
+//!
+//! [`Session`] is the top-level response. Fields:
+//! - `capabilities`: Server-wide capabilities (e.g. `urn:ietf:params:jmap:core`)
+//!   and their properties (RFC 8620 §2).
+//! - `accounts`: Map of account ID to [`SessionAccount`].
+//! - `primaryAccounts`: For each capability, which account to use by default.
+//! - `username`, `state`: Username and an opaque token. If `state` changes,
+//!   clients should refetch the session (server configuration changed).
+//! - API URLs: `apiUrl`, `downloadUrl`, `uploadUrl`, `eventSourceUrl`.
+//!   These use template placeholders (e.g. `{accountId}`, `{blobId}`)
+//!   that clients fill in (RFC 8620 §2).
+//!
+//! # SessionAccount
+//!
+//! [`SessionAccount`] describes one account:
+//! - `name`: Display name for the account.
+//! - `isPersonal`: True if this is the user's personal account.
+//! - `isReadOnly`: True if the account is read-only.
+//! - `accountCapabilities`: Per-account capabilities (not including core,
+//!   which every account implicitly supports).
+//!
+//! # Common Pattern: Single-Account Server
+//!
+//! Most personal JMAP servers have one account. Use [`Session::for_account`]
+//! to build the session:
+//!
+//! ```ignore
+//! let mut dispatcher: Dispatcher<MyContext> = Dispatcher::new("v1");
+//! dispatcher.add_capability("urn:ietf:params:jmap:mail", json!({}));
+//! dispatcher.add_capability("urn:ietf:params:jmap:submission", json!({}));
+//! // ... register methods ...
+//!
+//! let session = Session::for_account(
+//!     "https://mail.example.com",   // base URL
+//!     "alice@example.com",           // username
+//!     "account-123",                 // account ID
+//!     dispatcher.capabilities().clone(),  // capabilities
+//!     "s0",                          // session state
+//! );
+//!
+//! // Return session as JSON at GET /.well-known/jmap
+//! ```
+//!
+//! This automatically:
+//! - Sets up URL templates (apiUrl, uploadUrl, etc.)
+//! - Filters out `urn:ietf:params:jmap:core` from account capabilities
+//! - Maps each capability to the account as the primary account
+//!
+//! # Multi-Account Servers
+//!
+//! For servers with multiple accounts, build [`Session`] directly:
+//!
+//! ```ignore
+//! let mut capabilities = BTreeMap::new();
+//! capabilities.insert("urn:ietf:params:jmap:core".to_owned(), core_cap);
+//! capabilities.insert("urn:ietf:params:jmap:mail".to_owned(), mail_cap);
+//!
+//! let mut accounts = BTreeMap::new();
+//! accounts.insert("account-1".to_owned(), SessionAccount {
+//!     name: "alice@example.com".to_owned(),
+//!     is_personal: true,
+//!     is_read_only: false,
+//!     account_capabilities: /* mail-only accounts */,
+//! });
+//! accounts.insert("account-2".to_owned(), SessionAccount {
+//!     name: "shared-folder".to_owned(),
+//!     is_personal: false,
+//!     is_read_only: false,
+//!     account_capabilities: /* mail-only accounts */,
+//! });
+//!
+//! let session = Session {
+//!     capabilities,
+//!     accounts,
+//!     primary_accounts: /* capability → default account */,
+//!     username: "alice@example.com",
+//!     api_url: "https://mail.example.com/jmap/api",
+//!     download_url: "https://mail.example.com/jmap/download/{accountId}/{blobId}/{name}",
+//!     upload_url: "https://mail.example.com/jmap/upload/{accountId}",
+//!     event_source_url: "https://mail.example.com/jmap/events",
+//!     state: "s0",
+//! };
+//! ```
+//!
+//! # URL Templates
+//!
+//! The session object contains URL templates with placeholders. Clients
+//! replace these with their own values:
+//! - `{accountId}`: The account ID (from `Session::accounts` keys)
+//! - `{blobId}`: A blob identifier
+//! - `{name}`: A display name
+//! - `{type}`: A MIME type
+//! - `{types}`, `{closeafter}`, `{ping}`: EventSource parameters
+//!
+//! Example: If `downloadUrl` is
+//! ```
+//! https://mail.example.com/jmap/download/{accountId}/{blobId}/{name}
+//! ```
+//! A client needing to download blob `b123` from account `a1` would fetch:
+//! ```
+//! https://mail.example.com/jmap/download/a1/b123/document.pdf
+//! ```
+//!
+//! See RFC 8620 §2 for the complete set of templates.
 
 use std::collections::BTreeMap;
 

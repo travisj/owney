@@ -144,6 +144,24 @@ enum AdminCommand {
         #[arg(long, default_value = "default")]
         name: String,
     },
+    /// Disable an account (blocks login and inbound mail, reversible).
+    DisableAccount {
+        /// The account's address.
+        email: String,
+    },
+    /// Re-enable a disabled account.
+    EnableAccount {
+        /// The account's address.
+        email: String,
+    },
+    /// Permanently delete an account and all its data (irreversible).
+    DeleteAccount {
+        /// The account's address.
+        email: String,
+        /// Confirm deletion (required safety flag).
+        #[arg(long)]
+        confirm: bool,
+    },
     /// Print the DKIM DNS record to publish for this domain.
     DkimRecord,
     /// Show the AI activity feed for an account.
@@ -910,6 +928,64 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .await
                 .map_err(|err| anyhow::anyhow!("{err}"))?;
             println!("undone");
+            Ok(())
+        }
+        AdminCommand::DisableAccount { email } => {
+            anyhow::ensure!(
+                email.ends_with(&format!("@{}", config.server.domain)),
+                "{email} is not under this server's domain ({})",
+                config.server.domain
+            );
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no active account {email}"))?;
+            storage
+                .disable_account(account.id)
+                .await
+                .context("disabling account")?;
+            println!("disabled account {}", account.email);
+            Ok(())
+        }
+        AdminCommand::EnableAccount { email } => {
+            anyhow::ensure!(
+                email.ends_with(&format!("@{}", config.server.domain)),
+                "{email} is not under this server's domain ({})",
+                config.server.domain
+            );
+            let account = storage
+                .account_by_email_any_state(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            storage
+                .enable_account(account.id)
+                .await
+                .context("enabling account")?;
+            println!("enabled account {}", account.email);
+            Ok(())
+        }
+        AdminCommand::DeleteAccount { email, confirm } => {
+            anyhow::ensure!(
+                confirm,
+                "deletion requires --confirm flag (this is irreversible)"
+            );
+            anyhow::ensure!(
+                email.ends_with(&format!("@{}", config.server.domain)),
+                "{email} is not under this server's domain ({})",
+                config.server.domain
+            );
+            let account = storage
+                .account_by_email_any_state(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            storage
+                .delete_account(account.id)
+                .await
+                .context("deleting account")?;
+            println!("permanently deleted account {} and all associated data", account.email);
             Ok(())
         }
         AdminCommand::DkimRecord => {

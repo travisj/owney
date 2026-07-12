@@ -72,9 +72,27 @@ impl ImapSession {
             return format!("{} BAD LOGIN requires username and password\r\n", self.last_tag);
         }
 
-        // TODO: Validate credentials against Owney accounts
-        // For now, reject all (until we wire in auth)
-        format!("{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", self.last_tag)
+        let username = parts[2];
+        let password = parts[3];
+
+        // Password is treated as a bearer token (created via `owneyd admin token`)
+        match self.storage.account_by_token(password).await {
+            Ok(Some(account)) => {
+                // Verify the token's account matches the requested username
+                if account.email.eq_ignore_ascii_case(username) {
+                    self.account = Some((account.id, account.email.clone()));
+                    format!("{} OK LOGIN completed\r\n", self.last_tag)
+                } else {
+                    format!("{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", self.last_tag)
+                }
+            }
+            Ok(None) => {
+                format!("{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", self.last_tag)
+            }
+            Err(_) => {
+                format!("{} NO [UNAVAILABLE] Temporary authentication failure\r\n", self.last_tag)
+            }
+        }
     }
 
     fn handle_logout(&self) -> String {

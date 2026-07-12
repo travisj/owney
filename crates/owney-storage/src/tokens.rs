@@ -36,6 +36,7 @@ impl Storage {
     }
 
     /// Resolve a bearer token to its account, updating last-used.
+    /// Returns None if the token is invalid or the account is disabled.
     pub async fn account_by_token(&self, token: &str) -> Result<Option<Account>, StorageError> {
         if !token.starts_with(TOKEN_PREFIX) {
             return Ok(None);
@@ -47,7 +48,7 @@ impl Storage {
                     .query_row(
                         "SELECT a.id, a.email, a.display_name, a.created_at
                          FROM app_passwords p JOIN accounts a ON a.id = p.account_id
-                         WHERE p.token_hash = ?1",
+                         WHERE p.token_hash = ?1 AND a.disabled_at IS NULL",
                         [&token_hash],
                         row_to_account,
                     )

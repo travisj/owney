@@ -1,7 +1,110 @@
-//! Result references (RFC 8620 §3.7): a request argument named `#foo`
-//! containing `{resultOf, name, path}` is replaced by the value extracted
-//! from a previous method response via a JSON-pointer-like path where `*`
-//! flattens arrays.
+//! Result references (RFC 8620 §3.7): method chaining without round-trips.
+//!
+//! A request argument named `#foo` containing `{resultOf, name, path}` is
+//! replaced by the dispatcher with the value extracted from a previous
+//! method response. This allows clients to chain method calls and pass
+//! results from one call as arguments to the next within a single round-trip.
+//!
+//! # Overview
+//!
+//! The dispatcher calls [`resolve_references`] before handing arguments to
+//! a handler. For each `#key` in the arguments object:
+//!
+//! 1. Look up the prior response matching `resultOf` (call ID) and `name`
+//!    (method name).
+//! 2. Extract the value at the JSON path specified in `path` (e.g. `/ids`,
+//!    `/results/0/emails`).
+//! 3. Replace `#key` in the arguments with the extracted value. The handler
+//!    sees the plain key name.
+//!
+//! # Path Syntax
+//!
+//! Paths are JSON-Pointer-like (RFC 6901) with one extension: `*` acts as
+//! a wildcard.
+//!
+//! - `/ids` → the root `ids` field
+//! - `/list/0/name` → first item in `list`, then `name` field
+//! - `/list/*/ids` → for each item in `list`, get its `ids` field, flatten
+//!   result arrays one level
+//! - `/by_tag/*` → for each value in the object, flattens result arrays
+//!
+//! Wildcard flattening rules (RFC 8620 §3.7):
+//! - `*` against an array: apply the rest of the path to each element,
+//!   flatten one level of resulting arrays.
+//! - `*` against an object: apply the rest of the path to each value,
+//!   flatten one level of resulting arrays.
+//!
+//! # Example: Query then Get
+//!
+//! Client wants to query for emails, then fetch them. Without result
+//! references, this takes two requests. With them, one request:
+//!
+//! Request:
+//! ```json
+//! {
+//!   "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
+//!   "methodCalls": [
+//!     ["Email/query", {"accountId": "a1", "filter": {"inMailbox": "INBOX"}}, "q1"],
+//!     ["Email/get", {
+//!       "accountId": "a1",
+//!       "#ids": {
+//!         "resultOf": "q1",
+//!         "name": "Email/query",
+//!         "path": "/ids"
+//!       },
+//!       "properties": ["subject", "from"]
+//!     }, "g1"]
+//!   ]
+//! }
+//! ```
+//!
+//! First response (`Email/query`):
+//! ```json
+//! ["Email/query", {"ids": ["e1", "e2", "e3"]}, "q1"]
+//! ```
+//!
+//! The dispatcher resolves `#ids` to the value at `/ids` from the prior
+//! response, so the `Email/get` handler receives:
+//! ```json
+//! {
+//!   "accountId": "a1",
+//!   "ids": ["e1", "e2", "e3"],
+//!   "properties": ["subject", "from"]
+//! }
+//! ```
+//!
+//! # Example: Wildcard Flattening
+//!
+//! Query returns emails grouped by tag. Client wants all email IDs:
+//!
+//! Query response:
+//! ```json
+//! ["Foo/query", {
+//!   "byTag": {
+//!     "important": ["e1", "e2"],
+//!     "follow-up": ["e3"]
+//!   }
+//! }, "q1"]
+//! ```
+//!
+//! Reference with wildcard:
+//! ```json
+//! "#ids": {
+//!   "resultOf": "q1",
+//!   "name": "Foo/query",
+//!   "path": "/byTag/*"
+//! }
+//! ```
+//!
+//! Handler receives: `["e1", "e2", "e3"]` (one level of arrays flattened).
+//!
+//! # Errors
+//!
+//! Result reference resolution fails with [`MethodError::InvalidResultReference`] if:
+//! - The referenced call is missing from prior responses
+//! - The path does not exist in the response
+//! - The reference object is malformed (missing fields, unknown fields)
+//! - A plain key also exists in arguments (e.g., both `ids` and `#ids`)
 
 use serde::Deserialize;
 use serde_json::Value;

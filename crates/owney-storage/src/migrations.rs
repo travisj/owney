@@ -189,6 +189,12 @@ const MIGRATIONS: &[&str] = &[
     ) STRICT;
     CREATE INDEX dmarc_reports_by_domain ON dmarc_reports (account_id, domain, received_at DESC);
     "#,
+    // 7 -> 8: Account lifecycle: soft-disable via disabled_at timestamp.
+    // Disabled accounts cannot authenticate (JMAP/REST/MCP/IMAP) and reject
+    // inbound mail at RCPT (550). NULL = active; set to block login.
+    r#"
+    ALTER TABLE accounts ADD COLUMN disabled_at INTEGER;
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

@@ -154,6 +154,23 @@ impl Storage {
                 Ok(conn
                     .query_row(
                         "SELECT id, email, display_name, created_at
+                         FROM accounts WHERE email = ?1 AND disabled_at IS NULL",
+                        [email],
+                        row_to_account,
+                    )
+                    .optional()?)
+            })
+            .await
+    }
+
+    /// Look up an account by email including disabled ones (for admin enable/disable operations).
+    pub async fn account_by_email_any_state(&self, email: &str) -> Result<Option<Account>, StorageError> {
+        let email = email.trim().to_lowercase();
+        self.db
+            .call(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, email, display_name, created_at
                          FROM accounts WHERE email = ?1",
                         [email],
                         row_to_account,
@@ -174,6 +191,87 @@ impl Storage {
                     .query_map([], row_to_account)?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(accounts)
+            })
+            .await
+    }
+
+    /// Disable an account: blocks login and inbound mail rejection (550).
+    pub async fn disable_account(&self, id: AccountId) -> Result<(), StorageError> {
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE accounts SET disabled_at = ?1 WHERE id = ?2",
+                    params![unix_now(), id.to_string()],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Re-enable a disabled account.
+    pub async fn enable_account(&self, id: AccountId) -> Result<(), StorageError> {
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE accounts SET disabled_at = NULL WHERE id = ?2",
+                    params![id.to_string()],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Hard-delete an account and all associated data (cascades to emails, blobs, tokens, aliases).
+    /// This is permanent and intentionally explicit to avoid accidents.
+    pub async fn delete_account(&self, id: AccountId) -> Result<(), StorageError> {
+        self.db
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+
+                // Collect blob IDs to delete from storage
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT b.id FROM blobs b
+                     INNER JOIN emails e ON e.blob_id = b.id
+                     WHERE e.account_id = ?1",
+                )?;
+                let blob_ids: Vec<String> = stmt
+                    .query_map([id.to_string()], |row| row.get(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                drop(stmt);
+
+                // Delete cascade: aliases, submissions, tokens, pgp_peers, pgp_own_keys, ai_actions, ai_annotations, email_keywords, email_mailbox, emails, threads, mailboxes, states, accounts
+                for table in &[
+                    "aliases",
+                    "submissions",
+                    "queue",
+                    "app_passwords",
+                    "pgp_peers",
+                    "pgp_own_keys",
+                    "ai_actions",
+                    "ai_annotations",
+                    "email_keyword",
+                    "email_mailbox",
+                    "emails",
+                    "threads",
+                    "mailboxes",
+                    "states",
+                ] {
+                    tx.execute(
+                        &format!("DELETE FROM {} WHERE account_id = ?1", table),
+                        [id.to_string()],
+                    )?;
+                }
+                tx.execute(
+                    "DELETE FROM accounts WHERE id = ?1",
+                    [id.to_string()],
+                )?;
+                tx.commit()?;
+
+                // Delete blobs from filesystem
+                for blob_id in blob_ids {
+                    let _ = std::fs::remove_file(std::path::Path::new("blobs").join(&blob_id));
+                }
+                Ok(())
             })
             .await
     }
