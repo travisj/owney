@@ -9,7 +9,7 @@
 //! On failure at any step, abort and leave current binary untouched.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{anyhow, Context};
 use owney_core::Config;

@@ -6,7 +6,6 @@ use std::time::Duration;
 use owney_core::Config;
 use owney_events::EventBus;
 use owney_storage::Storage;
-use rustls_pemfile::certs;
 use std::fs;
 use tokio::task::JoinHandle;
 use tracing::info;
