@@ -53,6 +53,22 @@ pub struct DkimSummary {
     pub domain: String,
     pub selector: String,
     pub result: String,
+    /// Unix-second signature creation time (`t=` tag), 0 if absent.
+    #[serde(default)]
+    pub signature_at: u64,
+    /// Unix-second signature expiration time (`x=` tag), 0 if absent.
+    /// An expired-but-cryptographically-valid signature still reports `pass`;
+    /// consumers should consult `expired_at(now)` to spot replay/abuse.
+    #[serde(default)]
+    pub expires_at: u64,
+}
+
+impl DkimSummary {
+    /// Returns `true` if the signature is expired at `now_unix_seconds`.
+    /// A signature with no `x=` tag never expires.
+    pub fn expired_at(&self, now_unix_seconds: u64) -> bool {
+        self.expires_at != 0 && now_unix_seconds >= self.expires_at
+    }
 }
 
 /// Typed accessor for [`AuthVerdict::spf`] (Phase 2.1).
@@ -333,13 +349,15 @@ impl Authenticator {
                     .await;
 
                 let dkim_summaries = dkim
-                    .iter()
-                    .map(|output| DkimSummary {
-                        domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
-                        selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
-                        result: dkim_result_str(output.result()).to_owned(),
-                    })
-                    .collect();
+                     .iter()
+                     .map(|output| DkimSummary {
+                         domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
+                         selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
+                         result: dkim_result_str(output.result()).to_owned(),
+                         signature_at: output.signature().map(|s| s.t).unwrap_or(0),
+                         expires_at: output.signature().map(|s| s.x).unwrap_or(0),
+                     })
+                     .collect();
 
                 let dmarc_result = strongest_dmarc(&dmarc);
                 (
@@ -506,6 +524,8 @@ mod tests {
                 domain: "example.com".to_owned(),
                 selector: "s1".to_owned(),
                 result: "pass".to_owned(),
+                signature_at: 0,
+                expires_at: 0,
             }],
             arc: "none".to_owned(),
             dmarc: "fail".to_owned(),
@@ -533,5 +553,54 @@ mod tests {
         // Wire form is unchanged.
         assert!(json.contains("\"spf\":\"fail\""));
         assert!(json.contains("\"dmarc\":\"temperror\""));
+    }
+}
+
+#[cfg(test)]
+mod dkim_summary_tests {
+    use super::DkimSummary;
+
+    #[test]
+    fn expired_at_returns_false_when_no_expiration() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 0,
+            expires_at: 0,
+        };
+        assert!(!s.expired_at(0));
+        assert!(!s.expired_at(u64::MAX));
+    }
+
+    #[test]
+    fn expired_at_compares_to_now() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 0,
+            expires_at: 100,
+        };
+        assert!(!s.expired_at(99));
+        assert!(s.expired_at(100));
+        assert!(s.expired_at(101));
+    }
+
+    #[test]
+    fn dkim_summary_round_trips_via_serde_with_new_fields() {
+        let s = DkimSummary {
+            domain: "x".into(),
+            selector: "s".into(),
+            result: "pass".into(),
+            signature_at: 50,
+            expires_at: 150,
+        };
+        let json = serde_json::to_string(&s).expect("ser");
+        let back: DkimSummary = serde_json::from_str(&json).expect("de");
+        assert_eq!(back, s);
+        // Both new fields serialize.
+        assert!(json.contains("\"signature_at\":50"));
+        assert!(json.contains("\"expires_at\":150"));
     }
 }
