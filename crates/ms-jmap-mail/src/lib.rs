@@ -74,13 +74,132 @@ struct GetArgs {
     account_id: String,
     #[serde(default)]
     ids: Option<Vec<String>>,
+    /// Subset of properties to return. `None` means "all" (per RFC 8621
+    /// §6.1). Unknown properties cause an `invalidArguments` error at
+    /// `Email/get` time (via [`Subset::from_list`]).
+    #[serde(default)]
+    properties: Option<Vec<String>>,
     #[serde(default)]
     fetch_text_body_values: bool,
+}
+
+/// A property subset scope applied at the `Foo/get` boundary.
+///
+/// `None` ⇒ all canonical properties.
+/// `Some(set)` ⇒ only the listed canonical properties.
+///
+/// RFC 8621 §6.1 / §6.4 — `null` ↔ "all", and an unknown property
+/// is `invalidArguments`. We sanity-check at parse time, but the
+/// real validation (does a property exist for *this* data type)
+/// happens in the per-call `select` step.
+#[derive(Debug, Clone)]
+struct Subset {
+    /// The caller's requested properties (the projection target).
+    requested: std::collections::HashSet<String>,
+}
+
+impl Subset {
+    fn from_list(
+        type_name: &'static str,
+        requested: &[String],
+    ) -> Result<Option<Self>, MethodError> {
+        let allowed: std::collections::HashSet<&'static str> = match type_name {
+            "Email" => [
+                "id",
+                "blobId",
+                "threadId",
+                "mailboxIds",
+                "keywords",
+                "size",
+                "receivedAt",
+                "sender",
+                "from",
+                "to",
+                "cc",
+                "bcc",
+                "replyTo",
+                "subject",
+                "messageId",
+                "inReplyTo",
+                "snippet",
+                "bodyValues",
+                "textBody",
+                "htmlBody",
+                "attachments",
+                "hasAttachment",
+                "preview",
+                "authResults",
+                "pgpStatus",
+            ]
+            .into_iter()
+            .collect(),
+            "Mailbox" => [
+                "id",
+                "name",
+                "parentId",
+                "role",
+                "sortOrder",
+                "totalEmails",
+                "unreadEmails",
+                "totalThreads",
+                "unreadThreads",
+                "myRights",
+            ]
+            .into_iter()
+            .collect(),
+            _ => {
+                return Err(MethodError::InvalidArguments(format!(
+                    "{type_name}/get does not accept a properties filter"
+                )));
+            }
+        };
+        for prop in requested {
+            if !allowed.contains(prop.as_str()) {
+                return Err(MethodError::InvalidArguments(format!(
+                    "unknown property {prop:?} in {type_name}/get"
+                )));
+            }
+        }
+        let requested: std::collections::HashSet<String> =
+            requested.iter().cloned().collect();
+        Ok(Some(Self { requested }))
+    }
+
+    fn select(
+        &self,
+        full: &serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        // RFC 8621: zero-length list = "no properties" (return empty Map);
+        // non-empty list = the listed properties. We trust the caller
+        // already checked the list against the canonical allow-list.
+        full
+            .iter()
+            .filter(|(k, _)| self.requested.contains(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+}
+
+/// Helper: take `Option<&Subset>` (which `Option<&Subset>::None` means "all")
+/// and project to a `Map`.
+fn project(
+    subset: Option<&Subset>,
+    full: &serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    match subset {
+        Some(set) => set.select(full),
+        None => full.clone(),
+    }
 }
 
 async fn mailbox_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
     let args: GetArgs = parse(args)?;
     let account_id = check_account(&ctx, &args.account_id)?;
+
+    let subset = match args.properties.as_ref() {
+        None => None,
+        Some(list) => Subset::from_list("Mailbox", list)?,
+    };
 
     let mailboxes = ctx
         .storage
@@ -97,12 +216,24 @@ async fn mailbox_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
     let mut not_found: Vec<String> = Vec::new();
     match &args.ids {
         None => {
-            list = mailboxes.iter().map(mailbox_json).collect();
+            for m in &mailboxes {
+                let full = mailbox_json(m);
+                let map = full
+                    .as_object()
+                    .expect("mailbox_json returns an Object");
+                list.push(Value::Object(project(subset.as_ref(), map)));
+            }
         }
         Some(ids) => {
             for id in ids {
                 match mailboxes.iter().find(|m| &m.id == id) {
-                    Some(mailbox) => list.push(mailbox_json(mailbox)),
+                    Some(mailbox) => {
+                        let full = mailbox_json(mailbox);
+                        let map = full
+                            .as_object()
+                            .expect("mailbox_json returns an Object");
+                        list.push(Value::Object(project(subset.as_ref(), map)));
+                    }
                     None => not_found.push(id.clone()),
                 }
             }
@@ -144,7 +275,7 @@ fn mailbox_json(mailbox: &ms_storage::MailboxRow) -> Value {
     })
 }
 
-async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+ async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
     let args: GetArgs = parse(args)?;
     let account_id = check_account(&ctx, &args.account_id)?;
 
@@ -153,6 +284,11 @@ async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError>
         .as_ref()
         .ok_or_else(|| MethodError::InvalidArguments("Email/get requires ids".into()))?;
     let parsed_ids: Vec<ms_core::EmailId> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+
+    let subset = match args.properties.as_ref() {
+        None => None,
+        Some(list) => Subset::from_list("Email", list)?,
+    };
 
     let rows = ctx
         .storage
@@ -167,7 +303,12 @@ async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError>
 
     let mut list = Vec::with_capacity(rows.len());
     for row in &rows {
-        list.push(email_json(&ctx, row, args.fetch_text_body_values).await?);
+        let full = email_json(&ctx, row, args.fetch_text_body_values).await?;
+        let map = full
+            .as_object()
+            .ok_or_else(|| MethodError::InvalidArguments("internal: email not object".into()))?;
+        let projected = project(subset.as_ref(), map);
+        list.push(Value::Object(projected));
     }
     let not_found: Vec<&String> = ids
         .iter()

@@ -402,3 +402,84 @@ async fn email_query_rejects_unknown_filter_key() {
         "got {responses:?}"
     );
 }
+
+#[tokio::test]
+async fn email_get_properties_subset() {
+    let h = harness().await;
+    // Discover id via a query (harness uses UUID EmailIds, not Message-IDs).
+    let id_responses = h.call(json!([
+        ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
+    ])).await;
+    let email_id = id_responses[0].arguments()["ids"][0]
+        .as_str()
+        .expect("query id")
+        .to_owned();
+
+    let responses = h.call(json!([
+        ["Email/get", {
+            "accountId": h.account_id,
+            "ids": [email_id.clone()],
+            "properties": ["id", "subject"],
+        }, "c1"]
+    ])).await;
+    assert_eq!(responses[0].name(), "Email/get");
+    let row = &responses[0].arguments()["list"][0];
+    assert_eq!(row["id"], email_id, "id field returned");
+    // `subject` requested → a string is present; we don't pin to a specific
+    // value because the harness stores multiple unrelated messages.
+    assert!(
+        row.get("subject").is_some_and(|v| v.is_string()),
+        "subject requested and returned as string: {row:?}"
+    );
+    // `size`, `mailboxIds`, `from` should NOT be in the projection
+    // even though they are present on the underlying email row.
+    assert!(row.get("size").is_none(), "size NOT requested: {row:?}");
+    assert!(
+        row.get("mailboxIds").is_none(),
+        "mailboxIds NOT requested: {row:?}"
+    );
+    assert!(row.get("from").is_none(), "from NOT requested: {row:?}");
+}
+
+#[tokio::test]
+async fn email_get_unknown_property_rejected() {
+    let h = harness().await;
+    let id_responses = h.call(json!([
+        ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
+    ])).await;
+    let email_id = id_responses[0].arguments()["ids"][0]
+        .as_str()
+        .expect("query id")
+        .to_owned();
+
+    let responses = h.call(json!([
+        ["Email/get", {
+            "accountId": h.account_id,
+            "ids": [email_id],
+            "properties": ["id", "ttttotally_made_up"],
+        }, "c1"]
+    ])).await;
+    assert_eq!(responses[0].name(), "error");
+    assert_eq!(responses[0].arguments()["type"], "invalidArguments");
+}
+
+#[tokio::test]
+async fn mailbox_get_properties_subset() {
+    let h = harness().await;
+    // Requested subset of mailbox properties per RFC 8621 §6.1.
+    let responses = h.call(json!([
+        ["Mailbox/get", {
+            "accountId": h.account_id,
+            "properties": ["id", "name", "role"],
+        }, "c1"]
+    ])).await;
+    assert_eq!(responses[0].name(), "Mailbox/get");
+    let list = &responses[0].arguments()["list"];
+    let first = &list[0];
+    assert!(first.get("id").is_some());
+    assert!(first.get("name").is_some());
+    assert!(first.get("role").is_some());
+    assert!(first.get("totalEmails").is_none(), "totalEmails NOT requested");
+    assert!(first.get("myRights").is_none(), "myRights NOT requested");
+    assert!(first.get("sortOrder").is_none(), "sortOrder NOT requested");
+}
