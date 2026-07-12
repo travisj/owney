@@ -106,13 +106,13 @@ pub async fn create_backup(
         + blobs_tar_size
         + master_key_hash.to_hex().len() as u64;
 
-    // Create manifest
-    let manifest = BackupManifest {
+    // Create manifest (archive_hash will be filled after compression)
+    let mut manifest = BackupManifest {
         version: env!("CARGO_PKG_VERSION").to_string(),
         created_at: Utc::now().to_rfc3339(),
         master_key_hash: master_key_hash.to_hex().to_string(),
         uncompressed_size,
-        archive_hash: String::new(), // Will fill after compressing
+        archive_hash: String::new(),
     };
 
     let manifest_json = serde_json::to_string_pretty(&manifest)
@@ -121,7 +121,7 @@ pub async fn create_backup(
         .context("writing manifest.json")
         .map_err(|e| BackupError::Other(e.to_string()))?;
 
-    // Create tar.zst archive
+    // Create tar.zst archive (first pass - with empty archive_hash in manifest)
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let archive_name = format!("backup-{}.tar.zst", timestamp);
     let archive_path = output_dir.join(&archive_name);
@@ -131,16 +131,33 @@ pub async fn create_backup(
         .context("compressing backup")
         .map_err(|e| BackupError::Other(e.to_string()))?;
 
-    // Compute final archive hash (TODO: store in manifest)
+    // Compute archive hash and update manifest
     let archive_bytes = fs::read(&archive_path)
         .context("reading final archive")
         .map_err(|e| BackupError::Other(e.to_string()))?;
-    let _archive_hash = blake3::hash(&archive_bytes);
+    let archive_hash = blake3::hash(&archive_bytes);
+    manifest.archive_hash = archive_hash.to_hex().to_string();
+
+    // Re-write manifest with hash and recreate archive
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| BackupError::Other(format!("serializing manifest: {e}")))?;
+    fs::write(temp_path.join("manifest.json"), &manifest_json)
+        .context("writing updated manifest.json")
+        .map_err(|e| BackupError::Other(e.to_string()))?;
+
+    // Recreate archive with updated manifest
+    fs::remove_file(&archive_path)
+        .context("removing initial archive")
+        .map_err(|e| BackupError::Other(e.to_string()))?;
+    compress_to_zst(temp_path, &archive_path)
+        .context("recompressing backup with manifest")
+        .map_err(|e| BackupError::Other(e.to_string()))?;
 
     tracing::info!(
-        "backup created: {} ({} bytes)",
+        "backup created: {} ({} bytes, hash: {})",
         archive_path.display(),
-        archive_bytes.len()
+        archive_bytes.len(),
+        manifest.archive_hash
     );
 
     Ok(archive_path)

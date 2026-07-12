@@ -43,15 +43,19 @@ pub async fn test_migrations(
 
     info!("testing migrations on backup database");
 
+    // Extract version from new binary by running it
+    let version = extract_version(new_binary)
+        .unwrap_or_else(|_| "unknown".to_string());
+
     // Try to open the DB with the new binary's Storage layer
     // This will trigger any pending migrations
     let events = owney_events::EventBus::default();
     match Storage::open(temp_dir.path(), events) {
         Ok(storage) => {
-            info!("migrations successful");
+            info!("migrations successful (version: {})", version);
             drop(storage);
             Ok(UpdateReport {
-                version: "unknown".to_string(), // TODO: extract from binary
+                version,
                 migrations_ok: true,
                 migration_error: None,
             })
@@ -60,12 +64,32 @@ pub async fn test_migrations(
             let detail = format!("{e:?}");
             error!("migration test failed: {detail}");
             Ok(UpdateReport {
-                version: "unknown".to_string(),
+                version,
                 migrations_ok: false,
                 migration_error: Some(detail),
             })
         }
     }
+}
+
+/// Extract version from binary by running it with --version.
+fn extract_version(binary_path: &Path) -> anyhow::Result<String> {
+    let output = std::process::Command::new(binary_path)
+        .arg("--version")
+        .output()
+        .context("running binary --version")?;
+
+    if !output.status.success() {
+        return Err(anyhow!("binary --version failed"));
+    }
+
+    let version_output = String::from_utf8(output.stdout)?;
+    // Parse "owneyd 0.1.0" format
+    version_output
+        .split_whitespace()
+        .nth(1)
+        .map(|v| v.to_string())
+        .ok_or_else(|| anyhow!("could not parse version from output"))
 }
 
 /// Verify binary hash against expected value.

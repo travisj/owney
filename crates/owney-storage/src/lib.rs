@@ -231,6 +231,42 @@ impl Storage {
     pub fn close(self) {
         self.db.close();
     }
+
+    /// Get queue statistics: (total pending, failed).
+    pub async fn queue_stats(&self) -> Result<(u32, u32), StorageError> {
+        self.db.call(|conn| {
+            let total: u32 = conn.query_row(
+                "SELECT COUNT(*) FROM queue WHERE status IN ('queued', 'failed')",
+                [],
+                |row| row.get(0),
+            )?;
+            let failed: u32 = conn.query_row(
+                "SELECT COUNT(*) FROM queue WHERE status = 'failed'",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok((total, failed))
+        }).await
+    }
+
+    /// Check database integrity using PRAGMA integrity_check.
+    pub async fn check_integrity(&self) -> Result<bool, StorageError> {
+        self.db.call(|conn| {
+            let mut stmt = conn.prepare("PRAGMA integrity_check")?;
+            let rows = stmt.query_map([], |row| {
+                row.get::<_, String>(0)
+            })?;
+
+            for row_result in rows {
+                let message = row_result?;
+                if message != "ok" {
+                    tracing::warn!("database integrity issue: {}", message);
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }).await
+    }
 }
 
 const DEFAULT_MAILBOXES: [(&str, &str, i64); 7] = [
