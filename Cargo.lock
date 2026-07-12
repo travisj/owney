@@ -2187,6 +2187,7 @@ dependencies = [
  "ms-backup",
  "ms-core",
  "ms-delivery",
+ "ms-doctor",
  "ms-events",
  "ms-jmap-mail",
  "ms-pgp",
@@ -2437,6 +2438,26 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ms-doctor"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ms-core",
+ "ms-delivery",
+ "ms-events",
+ "ms-setup",
+ "ms-storage",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
 ]
 
 [[package]]

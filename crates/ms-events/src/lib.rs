@@ -48,6 +48,21 @@ pub enum Event {
         kind: SecurityEventKind,
         detail: String,
     },
+
+    /// A health check completed (DNS, certificate, queue, database, ...).
+    DoctorCheck(DoctorCheck),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    /// Name of the check (e.g., "dns_drift", "cert_expiry", "queue_health")
+    pub check: String,
+    /// "ok", "warning", "error"
+    pub status: String,
+    /// Human-readable message
+    pub message: String,
+    /// Unix timestamp when check ran
+    pub checked_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

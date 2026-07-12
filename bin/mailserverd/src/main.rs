@@ -520,6 +520,14 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         None
     };
 
+    // Health check daemon.
+    let doctor_worker = ms_doctor::spawn_checker(
+        Arc::new(config.clone()),
+        events.clone(),
+        storage.clone(),
+        std::time::Duration::from_secs(60),
+    );
+
     tracing::info!(
         smtp_listeners = config.smtp.listen.len(),
         api = %config.api.listen,
@@ -536,6 +544,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     }
     api_task.abort();
     worker.abort();
+    doctor_worker.abort();
     if let Some(ai_worker) = &ai_worker {
         ai_worker.abort();
     }

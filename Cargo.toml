@@ -13,6 +13,7 @@ authors = ["Travis Johnson <travisj@gmail.com>"]
 # internal crates
 ms-ai = { path = "crates/ms-ai" }
 ms-backup = { path = "crates/ms-backup" }
+ms-doctor = { path = "crates/ms-doctor" }
 jmap-core = { path = "crates/jmap-core" }
 ms-api = { path = "crates/ms-api" }
 ms-authn = { path = "crates/ms-authn" }
