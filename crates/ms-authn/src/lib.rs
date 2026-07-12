@@ -203,6 +203,20 @@ impl DmarcStatus {
 }
 
 impl AuthVerdict {
+    /// Synthetic verdict returned when the wall-clock `verify` timeout fires.
+    /// Every field forced to `"temperror"` so downstream policy treats the
+    /// message as evidence-of-broken-DNS rather than evidence-of-legit send.
+    pub fn timeout_verdict() -> Self {
+        Self {
+            iprev: "temperror".to_owned(),
+            spf: "temperror".to_owned(),
+            dkim: Vec::new(),
+            arc: "temperror".to_owned(),
+            dmarc: "temperror".to_owned(),
+            dmarc_policy: "none".to_owned(),
+        }
+    }
+
     /// Typed view of `self.spf`.
     pub fn spf_status(&self) -> SpfStatus {
         SpfStatus::parse(&self.spf)
@@ -303,7 +317,23 @@ impl Authenticator {
 
     /// Run the full verification stack. Never fails: DNS trouble shows up as
     /// temperror verdicts, evidence rather than errors.
+    ///
+    /// The whole verification is wrapped in a 10-second [`tokio::time::timeout`].
+    /// A genuine slow DNS server (or a malicious one) cannot stall DATA
+    /// indefinitely — the call returns a synthetic `temperror` verdict with
+    /// every field forced to `"temperror"` so downstream policy still gets a
+    /// result.
     pub async fn verify(&self, input: AuthInput<'_>) -> AuthVerdict {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), self.verify_inner(input)).await {
+            Ok(verdict) => verdict,
+            Err(_elapsed) => {
+                tracing::warn!(remote_ip = %input.remote_ip, "auth verify hit the 10s wall-clock timeout");
+                AuthVerdict::timeout_verdict()
+            }
+        }
+    }
+
+    async fn verify_inner(&self, input: AuthInput<'_>) -> AuthVerdict {
         let iprev = self.inner.verify_iprev(self.params(input.remote_ip)).await;
 
         // SPF: MAIL FROM when present, EHLO identity for bounces (RFC 7208 §2.4).
@@ -602,5 +632,27 @@ mod dkim_summary_tests {
         // Both new fields serialize.
         assert!(json.contains("\"signature_at\":50"));
         assert!(json.contains("\"expires_at\":150"));
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::{AuthVerdict, DmarcStatus, DkimStatus, SpfStatus};
+
+    #[test]
+    fn timeout_verdict_is_all_temperror() {
+        let v = AuthVerdict::timeout_verdict();
+        assert_eq!(v.iprev, "temperror");
+        assert_eq!(v.spf, "temperror");
+        assert_eq!(v.arc, "temperror");
+        assert_eq!(v.dmarc, "temperror");
+        assert_eq!(v.dmarc_policy, "none");
+        assert!(v.dkim.is_empty());
+
+        // Typed accessors reflect the synthetic temperror verdict:
+        assert_eq!(v.spf_status(), SpfStatus::TempError);
+        assert_eq!(v.arc_status(), DkimStatus::TempError);
+        assert_eq!(v.dmarc_status(), DmarcStatus::TempError);
+        assert!(v.dkim_statuses().is_empty());
     }
 }
