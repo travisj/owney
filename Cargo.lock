@@ -2184,6 +2184,7 @@ dependencies = [
  "ms-ai",
  "ms-api",
  "ms-authn",
+ "ms-backup",
  "ms-core",
  "ms-delivery",
  "ms-events",

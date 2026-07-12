@@ -12,6 +12,7 @@ jmap-core = { workspace = true }
 ms-api = { workspace = true }
 ms-ai = { workspace = true }
 ms-authn = { workspace = true }
+ms-backup = { workspace = true }
 ms-core = { workspace = true }
 ms-delivery = { workspace = true }
 ms-events = { workspace = true }

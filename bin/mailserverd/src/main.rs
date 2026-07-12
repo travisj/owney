@@ -44,7 +44,10 @@ enum Command {
         timeout: u64,
     },
     /// Create or restore backups. (M6)
-    Backup,
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     /// Administer a running installation.
     Admin {
         #[command(subcommand)]
@@ -56,6 +59,24 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BackupCommand {
+    /// Create a backup snapshot.
+    Create {
+        /// Output directory for backup archive (default: data_dir/backups).
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Restore a backup snapshot.
+    Restore {
+        /// Path to backup archive (tar.zst file).
+        archive: std::path::PathBuf,
+        /// Target data directory to restore into (default: config's data_dir).
+        #[arg(long)]
+        target: Option<std::path::PathBuf>,
     },
 }
 
@@ -141,7 +162,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Setup { verify, timeout } => setup(cli.config, verify, timeout),
-        Command::Backup => anyhow::bail!("`backup` arrives in milestone M6"),
+        Command::Backup { command } => run(cli.config, move |config| backup(config, command)),
         Command::Doctor => run(cli.config, doctor),
         Command::Serve => run(cli.config, serve),
         Command::Admin { command } => run(cli.config, move |config| admin(config, command)),
@@ -906,6 +927,54 @@ fn compose(
         id = uuid::Uuid::now_v7(),
     )
     .into_bytes()
+}
+
+async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
+    match command {
+        BackupCommand::Create { output } => {
+            let default_output = config.storage.data_dir.join("backups");
+            let output_dir = output.as_ref().unwrap_or(&default_output);
+            std::fs::create_dir_all(output_dir)
+                .context("creating output directory")?;
+
+            let archive_path = ms_backup::create_backup(&config, output_dir)
+                .await
+                .context("creating backup")?;
+
+            println!("✓ Backup created: {}", archive_path.display());
+            println!("  To restore: mailserverd backup restore {}", archive_path.display());
+            Ok(())
+        }
+        BackupCommand::Restore { archive, target } => {
+            let target_dir = target.unwrap_or(config.storage.data_dir.clone());
+            anyhow::ensure!(
+                !target_dir.exists() || std::fs::read_dir(&target_dir)?.next().is_none(),
+                "target directory must be empty or non-existent"
+            );
+            std::fs::create_dir_all(&target_dir)
+                .context("creating target directory")?;
+
+            // Restore master key first (user must provide it)
+            let master_key_src = config.storage.data_dir.join(ms_storage::MASTER_KEY_FILE);
+            if master_key_src.exists() {
+                let master_key_dst = target_dir.join(ms_storage::MASTER_KEY_FILE);
+                std::fs::copy(&master_key_src, &master_key_dst)
+                    .context("copying master key to target")?;
+                println!("  Master key preserved");
+            } else {
+                println!("⚠ Warning: no master key found; you may need to provide one manually");
+            }
+
+            let manifest = ms_backup::restore_backup(&archive, &target_dir)
+                .await
+                .context("restoring backup")?;
+
+            println!("✓ Backup restored: version {}", manifest.version);
+            println!("  Data directory: {}", target_dir.display());
+            println!("  Master key hash: {} (verify matches backup)", manifest.master_key_hash);
+            Ok(())
+        }
+    }
 }
 
 fn unix_now() -> i64 {
