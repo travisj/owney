@@ -2194,6 +2194,7 @@ dependencies = [
  "ms-setup",
  "ms-smtp-in",
  "ms-storage",
+ "ms-update",
  "rustls",
  "rustls-pemfile",
  "serde_json",
@@ -2568,6 +2569,23 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ms-update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "ms-core",
+ "ms-events",
+ "ms-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

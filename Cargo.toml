@@ -14,6 +14,7 @@ authors = ["Travis Johnson <travisj@gmail.com>"]
 ms-ai = { path = "crates/ms-ai" }
 ms-backup = { path = "crates/ms-backup" }
 ms-doctor = { path = "crates/ms-doctor" }
+ms-update = { path = "crates/ms-update" }
 jmap-core = { path = "crates/jmap-core" }
 ms-api = { path = "crates/ms-api" }
 ms-authn = { path = "crates/ms-authn" }

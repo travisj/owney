@@ -55,6 +55,17 @@ enum Command {
     },
     /// Diagnose DNS, reverse DNS, TLS, and outbound connectivity.
     Doctor,
+    /// Safe self-update: verify binary, test migrations, atomic swap.
+    Update {
+        /// Path to new binary.
+        binary: std::path::PathBuf,
+        /// Expected BLAKE3 hash of binary.
+        #[arg(long)]
+        hash: String,
+        /// Dry-run: test migrations without swapping binary.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Configuration helpers.
     Config {
         #[command(subcommand)]
@@ -164,6 +175,9 @@ fn main() -> anyhow::Result<()> {
         Command::Setup { verify, timeout } => setup(cli.config, verify, timeout),
         Command::Backup { command } => run(cli.config, move |config| backup(config, command)),
         Command::Doctor => run(cli.config, doctor),
+        Command::Update { binary, hash, dry_run } => run(cli.config, move |config| {
+            update(config, binary, hash, dry_run)
+        }),
         Command::Serve => run(cli.config, serve),
         Command::Admin { command } => run(cli.config, move |config| admin(config, command)),
     }
@@ -984,6 +998,42 @@ async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+async fn update(
+    config: Config,
+    new_binary: std::path::PathBuf,
+    expected_hash: String,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    // Get the current binary path (ourselves)
+    let current_binary = std::env::current_exe()
+        .context("determining current binary path")?;
+
+    println!("Mailserver Update");
+    println!("================");
+    println!("Current binary: {}", current_binary.display());
+    println!("New binary: {}", new_binary.display());
+    println!("Expected hash: {}", expected_hash);
+    println!();
+
+    // Perform update (or dry-run)
+    let report = ms_update::perform_update(&config, &new_binary, &expected_hash, &current_binary)
+        .await
+        .context("update failed")?;
+
+    if dry_run {
+        println!("✓ Dry-run successful");
+        println!("  Migrations: {}", if report.migrations_ok { "OK" } else { "FAILED" });
+        println!("  Binary would be swapped (not done in dry-run mode)");
+        return Ok(());
+    }
+
+    println!("✓ Update successful");
+    println!("  New binary is now in place");
+    println!("  IMPORTANT: You must restart the server for the update to take effect");
+    println!("  Suggested: systemctl restart mailserverd");
+    Ok(())
 }
 
 fn unix_now() -> i64 {

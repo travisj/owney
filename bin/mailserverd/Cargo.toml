@@ -15,6 +15,7 @@ ms-authn = { workspace = true }
 ms-backup = { workspace = true }
 ms-core = { workspace = true }
 ms-doctor = { workspace = true }
+ms-update = { workspace = true }
 ms-delivery = { workspace = true }
 ms-events = { workspace = true }
 ms-jmap-mail = { workspace = true }
