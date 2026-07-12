@@ -27,6 +27,8 @@ pub struct Config {
     #[serde(default)]
     pub ai: AiSection,
     #[serde(default)]
+    pub imap: ImapConfig,
+    #[serde(default)]
     pub log: LogConfig,
 }
 
@@ -54,6 +56,24 @@ impl Default for AiSection {
             model: "claude-haiku-4-5-20251001".to_owned(),
             base_url: "http://127.0.0.1:11434".to_owned(),
             api_key_env: "ANTHROPIC_API_KEY".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ImapConfig {
+    /// Socket address for IMAP4rev2 (read-only bridge).
+    pub listen: String,
+    /// Enable IMAP (default true; set false to disable bridge).
+    pub enabled: bool,
+}
+
+impl Default for ImapConfig {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1:143".to_owned(),
+            enabled: true,
         }
     }
 }

@@ -22,6 +22,7 @@ owney-authn = { path = "crates/owney-authn" }
 owney-core = { path = "crates/owney-core" }
 owney-delivery = { path = "crates/owney-delivery" }
 owney-events = { path = "crates/owney-events" }
+owney-imap = { path = "crates/owney-imap" }
 owney-jmap-mail = { path = "crates/owney-jmap-mail" }
 owney-mcp = { path = "crates/owney-mcp" }
 owney-pgp = { path = "crates/owney-pgp" }

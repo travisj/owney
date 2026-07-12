@@ -1,0 +1,24 @@
+[package]
+name = "owney-imap"
+description = "IMAP4rev2 (RFC 9051) read-only bridge: external clients read, sends route to JMAP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+owney-core = { workspace = true }
+owney-storage = { workspace = true }
+owney-delivery = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+
+[lints]
+workspace = true

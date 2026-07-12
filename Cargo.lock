@@ -2572,6 +2572,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "owney-imap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "owney-core",
+ "owney-delivery",
+ "owney-storage",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
 name = "owney-jmap-mail"
 version = "0.1.0"
 dependencies = [
@@ -2703,6 +2720,7 @@ dependencies = [
  "owney-delivery",
  "owney-doctor",
  "owney-events",
+ "owney-imap",
  "owney-jmap-mail",
  "owney-pgp",
  "owney-setup",

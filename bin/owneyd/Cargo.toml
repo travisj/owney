@@ -18,6 +18,7 @@ owney-doctor = { workspace = true }
 owney-update = { workspace = true }
 owney-delivery = { workspace = true }
 owney-events = { workspace = true }
+owney-imap = { workspace = true }
 owney-jmap-mail = { workspace = true }
 owney-pgp = { workspace = true }
 owney-setup = { workspace = true }
