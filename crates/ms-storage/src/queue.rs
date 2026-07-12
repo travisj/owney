@@ -243,7 +243,6 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ms_core::AccountId;
 
     async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, ms_events::EventBus) {
         crate::tests::open(tmp.path()).await
@@ -294,7 +293,4 @@ mod tests {
 
         storage.close();
     }
-
-    #[allow(dead_code)]
-    fn _unused(_a: AccountId) {}
 }

@@ -217,22 +217,14 @@ async fn mailbox_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
     match &args.ids {
         None => {
             for m in &mailboxes {
-                let full = mailbox_json(m);
-                let map = full
-                    .as_object()
-                    .expect("mailbox_json returns an Object");
-                list.push(Value::Object(project(subset.as_ref(), map)));
+                list.push(Value::Object(mailbox_projected(m, subset.as_ref())));
             }
         }
         Some(ids) => {
             for id in ids {
                 match mailboxes.iter().find(|m| &m.id == id) {
                     Some(mailbox) => {
-                        let full = mailbox_json(mailbox);
-                        let map = full
-                            .as_object()
-                            .expect("mailbox_json returns an Object");
-                        list.push(Value::Object(project(subset.as_ref(), map)));
+                        list.push(Value::Object(mailbox_projected(mailbox, subset.as_ref())));
                     }
                     None => not_found.push(id.clone()),
                 }
@@ -273,6 +265,15 @@ fn mailbox_json(mailbox: &ms_storage::MailboxRow) -> Value {
         },
         "isSubscribed": true,
     })
+}
+
+fn mailbox_projected(
+    mailbox: &ms_storage::MailboxRow,
+    subset: Option<&Subset>,
+) -> serde_json::Map<String, Value> {
+    let full = mailbox_json(mailbox);
+    let map = full.as_object().expect("mailbox_json returns an Object");
+    project(subset, map)
 }
 
  async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {

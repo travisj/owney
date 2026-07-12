@@ -1,0 +1,52 @@
+# mailserver configuration
+
+[server]
+# The mail domain this server handles (the part after the @).
+domain = "home.ypak.co"
+# This machine's fully-qualified hostname (what your MX record points to).
+hostname = "mail.home.ypak.co"
+
+[storage]
+# Where the database, blobs, and key material live. Back this directory up.
+data_dir = "/Users/travisj/mailserver-data"
+
+[smtp]
+# Inbound SMTP (MX) listeners.
+listen = ["0.0.0.0:25"]
+# Maximum message size in bytes (advertised via the SIZE extension).
+max_message_size = 26214400
+# Maximum recipients per message.
+max_recipients = 100
+
+# Optional until `setup` provisions certificates automatically (M2):
+# [tls]
+# cert_path = "/etc/mailserver/tls/fullchain.pem"
+# key_path = "/etc/mailserver/tls/privkey.pem"
+
+[delivery]
+# Uncomment to route all outbound mail through a relay instead of direct MX
+# delivery (needed on providers that block port 25):
+# smarthost = "smtp.relay.example:587"
+# Queue poll interval in seconds when idle.
+poll_interval_secs = 15
+
+[api]
+# HTTP API (JMAP). Bind localhost and put TLS in front for now.
+listen = "127.0.0.1:8380"
+# Public base URL; defaults to https://<server.hostname> when empty.
+public_url = ""
+
+[ai]
+# The AI layer. Screening and unsubscribe detection are deterministic and
+# always available; categorization and summaries need a provider.
+enabled = true
+# "claude" (default; reads the key from api_key_env), "openai-compat"
+# (Ollama/vLLM at base_url), or "none".
+provider = "claude"
+model = "claude-haiku-4-5-20251001"
+base_url = "http://127.0.0.1:11434"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[log]
+# Log filter, e.g. "info" or "ms_smtp_in=debug,info".
+filter = "info"
