@@ -3,7 +3,6 @@ use crate::AuthResult;
 use chrono::{DateTime, Duration, Utc};
 use qrcode::{QrCode, render::unicode};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// A QR code for device pairing (e.g., terminal to mobile).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +96,7 @@ impl QrCodePairing {
         let mut rng = rand::thread_rng();
         let charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         (0..16)
-            .map(|_| charset.chars().nth(rng.gen_range(0..charset.len())).unwrap())
+            .map(|_| charset.as_bytes()[rng.gen_range(0..charset.len())] as char)
             .collect()
     }
 

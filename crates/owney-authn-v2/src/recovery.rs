@@ -26,6 +26,7 @@ pub struct RecoveryCodes {
 }
 
 /// Manages recovery code generation and validation.
+#[derive(Debug)]
 pub struct RecoveryCodeManager;
 
 impl RecoveryCodeManager {
@@ -44,7 +45,7 @@ impl RecoveryCodeManager {
                     if i == 4 || i == 8 {
                         '-'
                     } else {
-                        charset.chars().nth(rng.gen_range(0..charset.len())).unwrap()
+                        charset.as_bytes()[rng.gen_range(0..charset.len())] as char
                     }
                 })
                 .collect();
@@ -53,7 +54,7 @@ impl RecoveryCodeManager {
             let display_code = format!("{}****-****-****", &code_str[0..2]);
 
             codes.push(RecoveryCode {
-                id: RecoveryCodeId(Uuid::new_v7()),
+                id: RecoveryCodeId(Uuid::now_v7()),
                 account_id: account_id.clone(),
                 code_hash,
                 display_code,
@@ -118,7 +119,7 @@ impl RecoveryCodeManager {
 
         let mut output = format!("{}{}\n{}\n\n", header, header_line, note);
 
-        for (i, code) in codes.iter().enumerate() {
+        for (i, _code) in codes.iter().enumerate() {
             // Reconstruct full code from hash (we can't - we only have the hash)
             // So we'll show the code when exported
             output.push_str(&format!("Code {}: ****-****-****\n", i + 1));

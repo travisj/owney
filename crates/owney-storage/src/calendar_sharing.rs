@@ -14,7 +14,7 @@ use crate::error::StorageError;
 use crate::Storage;
 
 /// Sharing type: read-only sharing vs. read-write delegation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SharingType {
     /// Read-only access to calendar
     Sharing,
@@ -115,18 +115,18 @@ impl Storage {
     pub async fn share_calendar(
         &self,
         calendar_id: CalendarId,
-        account_id: AccountId,
+        _account_id: AccountId,
         target_account_id: AccountId,
         sharing_type: SharingType,
     ) -> Result<CalendarSharing, StorageError> {
-        let sharing_id = uuid::Uuid::new_v7().to_string();
+        let sharing_id = uuid::Uuid::now_v7().to_string();
         let now = crate::unix_now();
         let permissions = match sharing_type {
             SharingType::Sharing => Permissions::sharing(),
             SharingType::Delegation => Permissions::delegation(),
         };
         let permissions_json = serde_json::to_string(&permissions)
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         self.db
             .call(move |conn| {
@@ -230,7 +230,7 @@ impl Storage {
         target_server_url: Option<String>,
         sharing_type: SharingType,
     ) -> Result<CalendarInvitation, StorageError> {
-        let invitation_id = uuid::Uuid::new_v7().to_string();
+        let invitation_id = uuid::Uuid::now_v7().to_string();
         let now = crate::unix_now();
 
         self.db
@@ -297,7 +297,6 @@ impl Storage {
 
     /// Accept a federated invitation and create corresponding sharing record.
     pub async fn accept_federation_invitation(&self, invitation_id: &str) -> Result<(), StorageError> {
-        let now = crate::unix_now();
         let invitation_id = invitation_id.to_string();
 
         self.db
@@ -345,6 +344,7 @@ impl Storage {
                     },
                 )
                 .optional()
+                .map_err(StorageError::from)
             })
             .await
     }
@@ -369,8 +369,8 @@ impl Storage {
             .await
     }
 
-    /// Get calendar events modified since timestamp (for sync).
-    pub async fn list_calendar_events_since(
+    /// Get IDs of calendar events modified since timestamp (for sync).
+    pub async fn list_calendar_event_ids_since(
         &self,
         calendar_id: owney_core::CalendarId,
         since_timestamp: i64,
@@ -453,8 +453,6 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
-    use super::Storage;
-
     #[allow(dead_code)]
     async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, owney_events::EventBus) {
         crate::tests::open(tmp.path()).await

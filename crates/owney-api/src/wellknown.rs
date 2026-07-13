@@ -13,24 +13,26 @@ use axum::{extract::Path, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use owney_storage::Storage;
-
 use crate::federation::{AccountInfo, CalendarInfo, FederationInvitation, ServerMetadata};
+use crate::ApiState;
 
 /// Mount well-known endpoints on the router
-pub fn routes() -> Router {
+pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/.well-known/owney/server", get(server_metadata))
-        .route("/.well-known/owney/account/:email", get(account_lookup))
+        .route("/.well-known/owney/account/{email}", get(account_lookup))
         .route("/.well-known/owney/calendar/invite", post(receive_invitation))
-        .route("/.well-known/owney/calendar/sync/:federation_id", get(calendar_sync))
+        .route(
+            "/.well-known/owney/calendar/sync/{federation_id}",
+            get(calendar_sync),
+        )
 }
 
 /// GET /.well-known/owney/server
 /// Returns server metadata for federation discovery
-async fn server_metadata(State(storage): State<Arc<Storage>>) -> impl IntoResponse {
+async fn server_metadata(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let metadata = ServerMetadata {
-        server_url: "https://owney.example.com".to_string(), // Should be configured
+        server_url: state.public_url.clone(),
         supported_features: vec![
             "calendar_sharing".to_string(),
             "calendar_delegation".to_string(),
@@ -43,12 +45,13 @@ async fn server_metadata(State(storage): State<Arc<Storage>>) -> impl IntoRespon
     axum::Json(metadata)
 }
 
-/// GET /.well-known/owney/account/:email
+/// GET /.well-known/owney/account/{email}
 /// Returns account info for federated discovery (read-only, public)
 async fn account_lookup(
-    State(storage): State<Arc<Storage>>,
+    State(state): State<Arc<ApiState>>,
     Path(email): Path<String>,
 ) -> impl IntoResponse {
+    let storage = &state.storage;
     // Note: This is a public endpoint, but should only return non-sensitive info
     // and the invitee should verify the actual invitation separately.
 
@@ -75,7 +78,7 @@ async fn account_lookup(
 
             (StatusCode::OK, axum::Json(info)).into_response()
         }
-        Err(_) => {
+        Ok(None) | Err(_) => {
             (StatusCode::NOT_FOUND, axum::Json(json!({"error": "account not found"}))).into_response()
         }
     }
@@ -84,14 +87,15 @@ async fn account_lookup(
 /// POST /.well-known/owney/calendar/invite
 /// Receive a federated calendar invitation from a remote server
 async fn receive_invitation(
-    State(storage): State<Arc<Storage>>,
+    State(state): State<Arc<ApiState>>,
     axum::Json(invitation): axum::Json<FederationInvitation>,
 ) -> impl IntoResponse {
+    let storage = &state.storage;
     // Extract domain from inviter_server_url for trust purposes
     // In production, would validate against allowlist
 
     match storage.account_by_email(&invitation.target_email).await {
-        Ok(Some(account)) => {
+        Ok(Some(_account)) => {
             // Create a pending invitation for the target account
             match storage
                 .create_federation_invitation(
@@ -145,14 +149,15 @@ async fn receive_invitation(
     }
 }
 
-/// GET /.well-known/owney/calendar/sync/:federation_id
+/// GET /.well-known/owney/calendar/sync/{federation_id}
 /// Fetch calendar changes for federation sync (polling protocol).
 /// Query params: token (optional sync token), since (optional unix timestamp)
 async fn calendar_sync(
-    State(storage): State<Arc<Storage>>,
+    State(state): State<Arc<ApiState>>,
     Path(federation_id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let storage = &state.storage;
     let sync_token = params.get("token").cloned();
     let since_timestamp = params
         .get("since")
@@ -230,7 +235,7 @@ async fn calendar_sync(
     let new_sync_token = format!("{}:v1", now);
 
     // Get calendar info
-    let calendar = match storage.get_calendar(federation.calendar_id).await {
+    let calendar = match storage.get_calendar_by_id(federation.calendar_id).await {
         Ok(Some(c)) => c,
         _ => {
             return (

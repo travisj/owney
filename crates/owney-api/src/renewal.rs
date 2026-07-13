@@ -74,7 +74,7 @@ async fn check_and_renew(
     };
 
     // Build ACME config
-    let mut domains = vec![config.server.hostname.clone()];
+    let domains = vec![config.server.hostname.clone()];
 
     let acme_cfg = if acme_config.staging {
         AcmeConfig::staging_new(domains, acme_config.email.clone(), acme_config.dns_provider.clone())

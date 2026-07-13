@@ -101,6 +101,38 @@ impl Storage {
             .await
     }
 
+    /// Get a calendar by ID regardless of owning account (used by
+    /// federation sync, where only the calendar ID is known).
+    pub async fn get_calendar_by_id(
+        &self,
+        calendar_id: CalendarId,
+    ) -> Result<Option<Calendar>, StorageError> {
+        self.db
+            .call(move |conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id, account_id, name, description, created_at, updated_at
+                         FROM calendars WHERE id = ?1",
+                        params![calendar_id.to_string()],
+                        |row| {
+                            Ok(Calendar {
+                                id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                                account_id: row
+                                    .get::<_, String>(1)?
+                                    .parse()
+                                    .unwrap_or_else(|_| AccountId::new()),
+                                name: row.get(2)?,
+                                description: row.get(3)?,
+                                created_at: row.get(4)?,
+                                updated_at: row.get(5)?,
+                            })
+                        },
+                    )
+                    .optional()?)
+            })
+            .await
+    }
+
     /// List all calendars for an account.
     pub async fn list_calendars(&self, account_id: AccountId) -> Result<Vec<Calendar>, StorageError> {
         self.db
@@ -343,9 +375,11 @@ impl Storage {
                 );
 
                 let mut stmt = conn.prepare(&query)?;
-                let mut params: Vec<&dyn rusqlite::ToSql> = vec![&calendar_id.to_string()];
-                for id in &event_ids {
-                    params.push(&id.to_string());
+                let calendar_id_str = calendar_id.to_string();
+                let event_id_strs: Vec<String> = event_ids.iter().map(|id| id.to_string()).collect();
+                let mut params: Vec<&dyn rusqlite::ToSql> = vec![&calendar_id_str];
+                for id in &event_id_strs {
+                    params.push(id);
                 }
 
                 let events = stmt
@@ -371,8 +405,6 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
-    use super::Storage;
-
     #[allow(dead_code)]
     async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, owney_events::EventBus) {
         crate::tests::open(tmp.path()).await

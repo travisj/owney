@@ -32,7 +32,7 @@ impl ChallengeStore {
 
     /// Store a challenge with a 10-minute TTL.
     pub async fn store_challenge(&self, challenge: Vec<u8>) -> Result<String, String> {
-        let session_id = Uuid::new_v7().to_string();
+        let session_id = Uuid::now_v7().to_string();
         let expires_at = Utc::now() + Duration::minutes(10);
 
         self.entries.write().await.insert(
@@ -63,7 +63,7 @@ impl ChallengeStore {
 
     /// Store a pairing code with a 2-minute TTL.
     pub async fn store_pairing_code(&self, code: String) -> Result<String, String> {
-        let code_id = Uuid::new_v7().to_string();
+        let code_id = Uuid::now_v7().to_string();
         let expires_at = Utc::now() + Duration::minutes(2);
 
         self.entries.write().await.insert(
@@ -133,8 +133,12 @@ impl SessionTokenManager {
         use sha2::{Sha256, Digest};
         use rand::Rng;
 
-        let mut rng = rand::thread_rng();
-        let random_bytes: [u8; 32] = rng.gen();
+        // Scope the ThreadRng so it is not held across the await below
+        // (ThreadRng is !Send and would make the future !Send).
+        let random_bytes: [u8; 32] = {
+            let mut rng = rand::thread_rng();
+            rng.r#gen()
+        };
 
         let mut hasher = Sha256::new();
         hasher.update(&random_bytes);

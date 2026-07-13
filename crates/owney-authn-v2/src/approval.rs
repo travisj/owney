@@ -59,6 +59,7 @@ pub enum DeviceType {
 }
 
 /// Manages cross-device approval requests.
+#[derive(Debug)]
 pub struct CrossDeviceApprovalManager;
 
 impl CrossDeviceApprovalManager {
@@ -74,7 +75,7 @@ impl CrossDeviceApprovalManager {
         let expires_at = now + Duration::seconds(ttl_secs as i64);
 
         Ok(ApprovalRequest {
-            id: ApprovalRequestId(Uuid::new_v7()),
+            id: ApprovalRequestId(Uuid::now_v7()),
             account_id,
             source_device,
             request_type,
@@ -131,7 +132,7 @@ impl CrossDeviceApprovalManager {
     fn generate_challenge() -> String {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        let challenge: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+        let challenge: Vec<u8> = (0..32).map(|_| rng.r#gen()).collect();
         hex::encode(challenge)
     }
 
@@ -179,7 +180,7 @@ mod tests {
         )
         .unwrap();
 
-        let device_id = DevicePairingId(Uuid::new_v7());
+        let device_id = DevicePairingId(Uuid::now_v7());
         CrossDeviceApprovalManager::approve_request(&mut req, device_id).unwrap();
 
         assert_eq!(req.status, ApprovalStatus::Approved);
@@ -196,12 +197,12 @@ mod tests {
         )
         .unwrap();
 
-        let device_id = DevicePairingId(Uuid::new_v7());
+        let device_id = DevicePairingId(Uuid::now_v7());
         CrossDeviceApprovalManager::approve_request(&mut req, device_id).unwrap();
 
         // Second approval fails
         let result =
-            CrossDeviceApprovalManager::approve_request(&mut req, DevicePairingId(Uuid::new_v7()));
+            CrossDeviceApprovalManager::approve_request(&mut req, DevicePairingId(Uuid::now_v7()));
         assert!(matches!(result, Err(AuthError::ApprovalAlreadyProcessed)));
     }
 }

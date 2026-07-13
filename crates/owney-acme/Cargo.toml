@@ -25,8 +25,7 @@ rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 
-# DNS providers
-cloudflare = "0.15"
+# DNS providers (Cloudflare uses plain reqwest against its REST API)
 aws-sdk-route53 = "1.40"
 aws-config = "1.5"
 async-trait = "0.1"

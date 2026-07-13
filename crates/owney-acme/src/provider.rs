@@ -8,6 +8,14 @@ pub struct CloudflareProvider {
     zone_id: String,
 }
 
+impl std::fmt::Debug for CloudflareProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudflareProvider")
+            .field("zone_id", &self.zone_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CloudflareProvider {
     /// Creates a new Cloudflare provider.
     /// api_token: Your Cloudflare API token (global or zone-scoped).
@@ -168,6 +176,7 @@ impl DnsProvider for CloudflareProvider {
 }
 
 /// AWS Route53 DNS provider for DNS-01 challenges.
+#[derive(Debug)]
 pub struct Route53Provider {
     zone_id: String,
     client: aws_sdk_route53::Client,
@@ -178,7 +187,8 @@ impl Route53Provider {
     /// zone_id: The Route53 hosted zone ID for your domain.
     /// Credentials are loaded from AWS SDK (env vars, instance metadata, etc).
     pub async fn new(zone_id: String) -> Result<Self, AcmeError> {
-        let config = aws_config::load_from_env().await;
+        let config =
+            aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = aws_sdk_route53::Client::new(&config);
 
         Ok(Self { zone_id, client })
@@ -199,22 +209,26 @@ impl DnsProvider for Route53Provider {
         let fqdn = self.challenge_fqdn(domain);
         let fqdn_with_dot = format!("{}.", fqdn);
 
+        let resource_record = aws_sdk_route53::types::ResourceRecord::builder()
+            .value(format!("\"{}\"", challenge_value))
+            .build()
+            .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 record: {e}")))?;
+
+        let record_set = aws_sdk_route53::types::ResourceRecordSet::builder()
+            .name(&fqdn_with_dot)
+            .r#type(aws_sdk_route53::types::RrType::Txt)
+            .ttl(120)
+            .resource_records(resource_record)
+            .build()
+            .map_err(|e| {
+                AcmeError::DnsProvider(format!("Failed to build Route53 record set: {e}"))
+            })?;
+
         let change = aws_sdk_route53::types::Change::builder()
             .action(aws_sdk_route53::types::ChangeAction::Create)
-            .resource_record_set(
-                aws_sdk_route53::types::ResourceRecordSet::builder()
-                    .name(&fqdn_with_dot)
-                    .set_type(aws_sdk_route53::types::RrType::Txt)
-                    .ttl(120)
-                    .resource_records(
-                        aws_sdk_route53::types::ResourceRecord::builder()
-                            .value(format!("\"{}\"", challenge_value))
-                            .build(),
-                    )
-                    .build()
-                    .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 record: {e}}")))?,
-            )
-            .build();
+            .resource_record_set(record_set)
+            .build()
+            .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 change: {e}")))?;
 
         self.client
             .change_resource_record_sets()
@@ -241,22 +255,26 @@ impl DnsProvider for Route53Provider {
         let fqdn = self.challenge_fqdn(domain);
         let fqdn_with_dot = format!("{}.", fqdn);
 
+        let resource_record = aws_sdk_route53::types::ResourceRecord::builder()
+            .value(format!("\"{}\"", challenge_value))
+            .build()
+            .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 record: {e}")))?;
+
+        let record_set = aws_sdk_route53::types::ResourceRecordSet::builder()
+            .name(&fqdn_with_dot)
+            .r#type(aws_sdk_route53::types::RrType::Txt)
+            .ttl(120)
+            .resource_records(resource_record)
+            .build()
+            .map_err(|e| {
+                AcmeError::DnsProvider(format!("Failed to build Route53 record set: {e}"))
+            })?;
+
         let change = aws_sdk_route53::types::Change::builder()
             .action(aws_sdk_route53::types::ChangeAction::Delete)
-            .resource_record_set(
-                aws_sdk_route53::types::ResourceRecordSet::builder()
-                    .name(&fqdn_with_dot)
-                    .set_type(aws_sdk_route53::types::RrType::Txt)
-                    .ttl(120)
-                    .resource_records(
-                        aws_sdk_route53::types::ResourceRecord::builder()
-                            .value(format!("\"{}\"", challenge_value))
-                            .build(),
-                    )
-                    .build()
-                    .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 record: {e}")))?,
-            )
-            .build();
+            .resource_record_set(record_set)
+            .build()
+            .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 change: {e}")))?;
 
         self.client
             .change_resource_record_sets()

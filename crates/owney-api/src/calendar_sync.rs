@@ -7,7 +7,6 @@ use std::sync::Arc;
 use owney_core::{CalendarId, EventId};
 use owney_storage::Storage;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
 /// Sync job for a federated calendar
 #[derive(Debug, Clone)]
@@ -47,6 +46,7 @@ pub struct CalendarSyncResponse {
 }
 
 /// Calendar sync coordinator - manages background polling of federated calendars
+#[derive(Debug)]
 pub struct CalendarSyncCoordinator {
     storage: Arc<Storage>,
 }
@@ -114,7 +114,7 @@ impl CalendarSyncCoordinator {
                     .update_calendar_event(
                         event_id,
                         Some(event.title),
-                        Some(event.description),
+                        event.description,
                         Some(event.start),
                         Some(event.end),
                         event.rrule,
@@ -164,7 +164,7 @@ impl CalendarSyncCoordinator {
             .map_err(|e| SyncError::NetworkError(e.to_string()))?;
 
         if !resp.status().is_success() {
-            if resp.status() == reqwest::http::StatusCode::NOT_FOUND {
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
                 return Err(SyncError::FederationNotFound);
             }
             return Err(SyncError::RemoteError(resp.status().to_string()));

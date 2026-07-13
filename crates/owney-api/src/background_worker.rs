@@ -26,6 +26,7 @@ impl Default for SyncWorkerConfig {
 }
 
 /// Background sync worker
+#[derive(Debug)]
 pub struct SyncWorker {
     storage: Arc<Storage>,
     config: SyncWorkerConfig,

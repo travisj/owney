@@ -6,9 +6,9 @@ use axum::{
     Json, Router,
 };
 use owney_authn_v2::{
-    self, ApprovalRequestId, ApprovalRequestType, ApprovalStatus, AuthError, AuthResult,
-    CrossDeviceApprovalManager, PasswordlessAuthConfig, PasskeyManager, QrCodePairing,
-    RecoveryCodeManager,
+    self, AuthError, AuthResult, CredentialId, PasskeyAuthentication, PasskeyManager,
+    PasskeyRegistration, PasswordlessAuthConfig, PublicKeyCredential,
+    RegisterPublicKeyCredential,
 };
 use owney_core::Config;
 use owney_storage::Storage;
@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::challenge_store::{ChallengeStore, SessionTokenManager};
 
 /// Passwordless authentication state (managed globally).
+#[derive(Debug)]
 pub struct AuthState {
     pub passkey_manager: PasskeyManager,
     pub config: PasswordlessAuthConfig,
@@ -175,15 +176,26 @@ pub struct ErrorResponse {
     pub details: Option<String>,
 }
 
-impl IntoResponse for AuthError {
+/// Local wrapper so axum's `IntoResponse` can be implemented (the orphan
+/// rule forbids implementing it directly for `owney_authn_v2::AuthError`).
+#[derive(Debug)]
+pub struct ApiAuthError(pub AuthError);
+
+impl From<AuthError> for ApiAuthError {
+    fn from(e: AuthError) -> Self {
+        Self(e)
+    }
+}
+
+impl IntoResponse for ApiAuthError {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
+        let (status, code, message) = match self.0 {
             AuthError::InvalidCredentialId => (
                 StatusCode::BAD_REQUEST,
                 "invalid_credential_id",
                 "Invalid credential format",
             ),
-            AuthError::WebAuthn(ref msg) => (
+            AuthError::WebAuthn(_) => (
                 StatusCode::BAD_REQUEST,
                 "webauthn_error",
                 "WebAuthn operation failed",
@@ -238,7 +250,7 @@ impl IntoResponse for AuthError {
         let error = ErrorResponse {
             error: message.to_string(),
             code: code.to_string(),
-            details: Some(format!("{:?}", self)),
+            details: Some(format!("{:?}", self.0)),
         };
 
         (status, Json(error)).into_response()
@@ -249,27 +261,61 @@ impl IntoResponse for AuthError {
 // Handler Functions
 // ============================================================================
 
+/// Registration state persisted in the challenge store between
+/// registration start and finish.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredRegistrationState {
+    email: String,
+    state: PasskeyRegistration,
+}
+
+/// Converts a storage-layer credential (which persists the webauthn-rs
+/// `Passkey` as serde_json bytes in `public_key`) into the domain type.
+fn storage_cred_to_authn(
+    cred: &owney_storage::PasskeyCredential,
+) -> Result<owney_authn_v2::PasskeyCredential, ApiAuthError> {
+    let passkey = owney_authn_v2::PasskeyCredential::passkey_from_bytes(&cred.public_key)?;
+    Ok(owney_authn_v2::PasskeyCredential {
+        id: CredentialId(cred.id.clone()),
+        account_id: cred.account_id.clone(),
+        device_name: cred.device_name.clone(),
+        passkey,
+        counter: cred.counter,
+        backup_eligible: cred.backup_eligible,
+        backup_state: cred.backup_state,
+        created_at: cred.created_at,
+        last_used_at: cred.last_used_at,
+        disabled: cred.disabled,
+    })
+}
+
 pub async fn passkey_registration_start(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<PasskeyRegistrationStartRequest>,
-) -> Result<Json<PasskeyRegistrationStartResponse>, AuthError> {
+) -> Result<Json<PasskeyRegistrationStartResponse>, ApiAuthError> {
     // Validate email format
     if !req.email.contains('@') {
-        return Err(AuthError::Config("Invalid email address".to_string()));
+        return Err(AuthError::Config("Invalid email address".to_string()).into());
     }
 
     // Normalize email to lowercase
     let email = req.email.to_lowercase();
 
     // Generate registration challenge
-    let reg_opts = state.passkey_manager.start_registration(&email, &email)?;
+    let reg_opts = state.passkey_manager.start_registration(&email, &email, None)?;
 
-    // Store challenge
+    // Store the serialized registration state (challenge + verification data)
+    let stored = StoredRegistrationState {
+        email: email.clone(),
+        state: reg_opts.state,
+    };
+    let state_bytes = serde_json::to_vec(&stored)
+        .map_err(|e| AuthError::Internal(format!("State serialization failed: {e}")))?;
     let session_id = state
         .challenge_store
-        .store_challenge(reg_opts.challenge_bytes.clone())
+        .store_challenge(state_bytes)
         .await
-        .map_err(|e| AuthError::Config(e))?;
+        .map_err(AuthError::Config)?;
 
     tracing::info!(email = %email, session_id = %session_id, "passkey registration started");
 
@@ -283,43 +329,40 @@ pub async fn passkey_registration_start(
 pub async fn passkey_registration_finish(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<PasskeyRegistrationFinishRequest>,
-) -> Result<Json<PasskeyRegistrationFinishResponse>, AuthError> {
-    // Retrieve challenge from storage
-    let challenge = state
+) -> Result<Json<PasskeyRegistrationFinishResponse>, ApiAuthError> {
+    // Retrieve serialized registration state from storage
+    let state_bytes = state
         .challenge_store
         .retrieve_challenge(&req.session_id)
         .await
         .map_err(|_| AuthError::ChallengeMismatch)?;
+    let stored: StoredRegistrationState =
+        serde_json::from_slice(&state_bytes).map_err(|_| AuthError::ChallengeMismatch)?;
 
-    // Parse client response - this should be a PublicKeyCredential
-    let response: owney_authn_v2::passkey::RegistrationResponse =
-        serde_json::from_value(req.credential)
-            .map_err(|_| AuthError::WebAuthn("Invalid credential format".to_string()))?;
+    // Parse client response
+    let response: RegisterPublicKeyCredential = serde_json::from_value(req.credential)
+        .map_err(|_| AuthError::WebAuthn("Invalid credential format".to_string()))?;
 
-    // Verify registration and create credential
-    // Note: account_id is passed as first parameter, but we'll use "temp" for now
-    // In production, this would come from an authenticated session
+    // Verify registration and create the credential. The account is keyed by
+    // the (normalized) email captured at registration start.
     let credential = state.passkey_manager.finish_registration(
-        "temp-account-id".to_string(),
+        stored.email,
         req.device_name,
-        response,
-        challenge,
+        &response,
+        &stored.state,
     )?;
 
-    // In a real implementation, you'd get the account_id from auth context
-    // For now, we'll just save the credential and return success
-    // You would then need to associate this with an account
-
-    // Create storage credential object
+    // Create storage credential object; the whole webauthn-rs Passkey is
+    // serialized into the public_key column.
     let storage_cred = owney_storage::PasskeyCredential {
         id: credential.id.0.clone(),
         account_id: credential.account_id.clone(),
         device_name: credential.device_name.clone(),
-        public_key: credential.public_key.clone(),
+        public_key: credential.passkey_bytes()?,
         counter: credential.counter,
         backup_eligible: credential.backup_eligible,
         backup_state: credential.backup_state,
-        aaguid: if credential.aaguid.is_empty() { None } else { Some(credential.aaguid.clone()) },
+        aaguid: None,
         created_at: credential.created_at,
         last_used_at: credential.last_used_at,
         disabled: credential.disabled,
@@ -327,7 +370,7 @@ pub async fn passkey_registration_finish(
 
     // Save to database
     state.storage.save_passkey_credential(&storage_cred).await
-        .map_err(|e| AuthError::WebAuthn(format!("Failed to save credential: {}", e)))?;
+        .map_err(|e| AuthError::Database(format!("Failed to save credential: {}", e)))?;
 
     tracing::info!(account_id = %credential.account_id, device_name = %credential.device_name, "passkey registered");
 
@@ -340,7 +383,7 @@ pub async fn passkey_registration_finish(
 pub async fn passkey_authentication_start(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<PasskeyAuthenticationStartRequest>,
-) -> Result<Json<PasskeyAuthenticationStartResponse>, AuthError> {
+) -> Result<Json<PasskeyAuthenticationStartResponse>, ApiAuthError> {
     // Normalize email
     let email = req.email.to_lowercase();
 
@@ -350,22 +393,29 @@ pub async fn passkey_authentication_start(
         .ok_or(AuthError::CredentialNotFound)?;
 
     // Get user's registered passkeys
-    let _passkeys = state.storage.list_passkeys_for_account(email.clone()).await
+    let stored_passkeys = state.storage.list_passkeys_for_account(email.clone()).await
         .map_err(|_| AuthError::CredentialNotFound)?;
 
-    if _passkeys.is_empty() {
-        return Err(AuthError::CredentialNotFound);
+    if stored_passkeys.is_empty() {
+        return Err(AuthError::CredentialNotFound.into());
     }
 
-    // Generate authentication challenge (start_authentication doesn't take credentials)
-    let auth_opts = state.passkey_manager.start_authentication()?;
+    let credentials = stored_passkeys
+        .iter()
+        .map(storage_cred_to_authn)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    // Store challenge
+    // Generate authentication challenge against the user's passkeys
+    let auth_opts = state.passkey_manager.start_authentication(&credentials)?;
+
+    // Store the serialized authentication state
+    let state_bytes = serde_json::to_vec(&auth_opts.state)
+        .map_err(|e| AuthError::Internal(format!("State serialization failed: {e}")))?;
     let session_id = state
         .challenge_store
-        .store_challenge(auth_opts.challenge_bytes.clone())
+        .store_challenge(state_bytes)
         .await
-        .map_err(|e| AuthError::Config(e))?;
+        .map_err(AuthError::Config)?;
 
     tracing::info!(email = %email, session_id = %session_id, "passkey authentication started");
 
@@ -379,57 +429,41 @@ pub async fn passkey_authentication_start(
 pub async fn passkey_authentication_finish(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<PasskeyAuthenticationFinishRequest>,
-) -> Result<Json<PasskeyAuthenticationFinishResponse>, AuthError> {
-    // Retrieve challenge
-    let challenge = state
+) -> Result<Json<PasskeyAuthenticationFinishResponse>, ApiAuthError> {
+    // Retrieve serialized authentication state
+    let state_bytes = state
         .challenge_store
         .retrieve_challenge(&req.session_id)
         .await
         .map_err(|_| AuthError::ChallengeMismatch)?;
+    let auth_state: PasskeyAuthentication =
+        serde_json::from_slice(&state_bytes).map_err(|_| AuthError::ChallengeMismatch)?;
 
     // Parse assertion response
-    let response: owney_authn_v2::passkey::AuthenticationResponse =
-        serde_json::from_value(req.credential)
-            .map_err(|_| AuthError::WebAuthn("Invalid assertion format".to_string()))?;
+    let response: PublicKeyCredential = serde_json::from_value(req.credential)
+        .map_err(|_| AuthError::WebAuthn("Invalid assertion format".to_string()))?;
 
     // Get credential from storage
-    let cred_id = response.raw_id.as_slice();
-    let mut stored_cred = state.storage.get_passkey_credential(cred_id).await
+    let cred_id: Vec<u8> = response.raw_id.as_ref().to_vec();
+    let stored_cred = state.storage.get_passkey_credential(&cred_id).await
         .map_err(|_| AuthError::CredentialNotFound)?
         .ok_or(AuthError::CredentialNotFound)?;
 
-    // Convert to webauthn::Credential format for verification
-    let webauthn_cred = owney_authn_v2::passkey::PasskeyCredential {
-        id: owney_authn_v2::CredentialId(stored_cred.id.clone()),
-        account_id: stored_cred.account_id.clone(),
-        device_name: stored_cred.device_name.clone(),
-        public_key: stored_cred.public_key.clone(),
-        counter: stored_cred.counter,
-        backup_eligible: stored_cred.backup_eligible,
-        backup_state: stored_cred.backup_state,
-        aaguid: stored_cred.aaguid.clone().unwrap_or_default(),
-        created_at: stored_cred.created_at,
-        last_used_at: stored_cred.last_used_at,
-        disabled: stored_cred.disabled,
-    };
-
-    // Verify authentication (this mutates the credential with new counter and last_used_at)
-    let mut auth_cred = webauthn_cred.clone();
-    state.passkey_manager.finish_authentication(
-        response,
-        &mut auth_cred,
-        challenge,
-    )?;
+    // Verify authentication (this updates counter, backup flags, last_used_at)
+    let mut auth_cred = storage_cred_to_authn(&stored_cred)?;
+    state
+        .passkey_manager
+        .finish_authentication(&response, &auth_state, &mut auth_cred)?;
 
     // Update counter and last_used_at in storage
-    state.storage.update_passkey_counter(cred_id, auth_cred.counter).await
-        .map_err(|e| AuthError::WebAuthn(format!("Failed to update credential: {}", e)))?;
+    state.storage.update_passkey_counter(&cred_id, auth_cred.counter).await
+        .map_err(|e| AuthError::Database(format!("Failed to update credential: {}", e)))?;
 
     // Generate session token
     let session_token = state.session_tokens
         .generate_token(stored_cred.account_id.clone())
         .await
-        .map_err(|e| AuthError::Config(e))?;
+        .map_err(AuthError::Config)?;
 
     tracing::info!(account_id = %stored_cred.account_id, "passkey authentication successful");
 
@@ -441,16 +475,16 @@ pub async fn passkey_authentication_finish(
 }
 
 pub async fn recovery_code_generate(
-    State(state): State<Arc<AuthState>>,
+    State(_state): State<Arc<AuthState>>,
     Json(req): Json<RecoveryCodeGenerateRequest>,
-) -> Result<Json<RecoveryCodeGenerateResponse>, AuthError> {
+) -> Result<Json<RecoveryCodeGenerateResponse>, ApiAuthError> {
     // For now, we accept an account_id via a custom header or body parameter
     // In a real implementation, this would be extracted from an authenticated session
     // This is a placeholder - you should integrate with your auth middleware
 
     let count = req.count.unwrap_or(10);
     if count == 0 || count > 100 {
-        return Err(AuthError::Config("Count must be between 1 and 100".to_string()));
+        return Err(AuthError::Config("Count must be between 1 and 100".to_string()).into());
     }
 
     // Generate recovery codes
@@ -496,7 +530,7 @@ pub async fn recovery_code_generate(
 pub async fn recovery_code_use(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<RecoveryCodeUseRequest>,
-) -> Result<Json<RecoveryCodeUseResponse>, AuthError> {
+) -> Result<Json<RecoveryCodeUseResponse>, ApiAuthError> {
     use sha2::{Sha256, Digest};
 
     // Normalize code (remove dashes, uppercase)
@@ -513,7 +547,7 @@ pub async fn recovery_code_use(
         .ok_or(AuthError::InvalidRecoveryCode)?;
 
     if recovery_code.used {
-        return Err(AuthError::RecoveryCodeUsed);
+        return Err(AuthError::RecoveryCodeUsed.into());
     }
 
     // Mark code as used
@@ -538,7 +572,7 @@ pub async fn recovery_code_use(
 pub async fn approval_request_create(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<ApprovalRequestCreateRequest>,
-) -> Result<Json<ApprovalRequestCreateResponse>, AuthError> {
+) -> Result<Json<ApprovalRequestCreateResponse>, ApiAuthError> {
     use uuid::Uuid;
     use rand::Rng;
 
@@ -555,13 +589,16 @@ pub async fn approval_request_create(
         .map_err(|_| AuthError::Unauthorized)?;
 
     if devices.is_empty() {
-        return Err(AuthError::TooManyPendingApprovals); // No devices enrolled
+        return Err(AuthError::TooManyPendingApprovals.into()); // No devices enrolled
     }
 
-    // Generate approval request
-    let request_id = Uuid::new_v7().to_string();
-    let mut rng = rand::thread_rng();
-    let challenge_bytes: [u8; 32] = rng.gen();
+    // Generate approval request. Scope the ThreadRng so it is not held
+    // across the awaits below (ThreadRng is !Send).
+    let request_id = Uuid::now_v7().to_string();
+    let challenge_bytes: [u8; 32] = {
+        let mut rng = rand::thread_rng();
+        rng.r#gen()
+    };
     let challenge = hex::encode(challenge_bytes);
 
     let now = chrono::Utc::now();
@@ -607,7 +644,7 @@ pub async fn approval_request_create(
 pub async fn approval_request_status(
     State(state): State<Arc<AuthState>>,
     Path(request_id): Path<String>,
-) -> Result<Json<ApprovalRequestStatusResponse>, AuthError> {
+) -> Result<Json<ApprovalRequestStatusResponse>, ApiAuthError> {
     let request = state.storage.get_approval_request(&request_id).await
         .map_err(|_| AuthError::ApprovalRequestExpired)?
         .ok_or(AuthError::ApprovalRequestExpired)?;
@@ -634,7 +671,7 @@ pub async fn approval_request_approve(
     State(state): State<Arc<AuthState>>,
     Path(request_id): Path<String>,
     Json(req): Json<ApprovalRequestApproveRequest>,
-) -> Result<Json<ApprovalRequestApproveResponse>, AuthError> {
+) -> Result<Json<ApprovalRequestApproveResponse>, ApiAuthError> {
     // Get the approval request
     let approval_req = state.storage.get_approval_request(&request_id).await
         .map_err(|_| AuthError::ApprovalRequestExpired)?
@@ -642,7 +679,7 @@ pub async fn approval_request_approve(
 
     // Check if expired
     if chrono::Utc::now() > approval_req.expires_at {
-        return Err(AuthError::ApprovalRequestExpired);
+        return Err(AuthError::ApprovalRequestExpired.into());
     }
 
     // Verify device is enrolled and belongs to same account
@@ -651,11 +688,11 @@ pub async fn approval_request_approve(
         .ok_or(AuthError::Unauthorized)?;
 
     if device.account_id != approval_req.account_id {
-        return Err(AuthError::Unauthorized);
+        return Err(AuthError::Unauthorized.into());
     }
 
     if !device.can_approve {
-        return Err(AuthError::Unauthorized);
+        return Err(AuthError::Unauthorized.into());
     }
 
     // Mark as approved
@@ -680,7 +717,7 @@ pub async fn approval_request_approve(
 
 pub async fn qr_code_pairing(
     State(state): State<Arc<AuthState>>,
-) -> Result<Json<QrCodePairingResponse>, AuthError> {
+) -> Result<Json<QrCodePairingResponse>, ApiAuthError> {
     use uuid::Uuid;
 
     // Generate pairing code (alphanumeric, 8 chars)
@@ -710,7 +747,7 @@ pub async fn qr_code_pairing(
 pub async fn qr_code_pairing_confirm(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<QrCodePairingConfirmRequest>,
-) -> Result<Json<QrCodePairingConfirmResponse>, AuthError> {
+) -> Result<Json<QrCodePairingConfirmResponse>, ApiAuthError> {
     use uuid::Uuid;
 
     // Verify pairing code exists and hasn't expired
@@ -722,7 +759,7 @@ pub async fn qr_code_pairing_confirm(
     let account_id = "placeholder".to_string();
 
     // Generate device ID
-    let device_id = Uuid::new_v7().to_string();
+    let device_id = Uuid::now_v7().to_string();
 
     // In a real implementation, you would:
     // 1. Derive public key from the pairing handshake
@@ -795,11 +832,11 @@ pub fn auth_routes() -> Router<Arc<AuthState>> {
             post(approval_request_create),
         )
         .route(
-            "/auth/approval/:request_id",
+            "/auth/approval/{request_id}",
             get(approval_request_status),
         )
         .route(
-            "/auth/approval/:request_id/approve",
+            "/auth/approval/{request_id}/approve",
             post(approval_request_approve),
         )
         .route("/auth/pairing/qr", get(qr_code_pairing))
@@ -812,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_challenge_store() {
-        let store = crate::challenge_store::ChallengeStore::new();
+        let _store = crate::challenge_store::ChallengeStore::new();
         // Tests are in challenge_store module
     }
 
@@ -825,7 +862,7 @@ mod tests {
 
     #[test]
     fn test_error_response_conversion() {
-        let err: AuthError = AuthError::ChallengeMismatch;
+        let err: ApiAuthError = AuthError::ChallengeMismatch.into();
         let response: Response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }

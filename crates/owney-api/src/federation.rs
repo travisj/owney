@@ -53,6 +53,7 @@ pub struct FederationInvitation {
 }
 
 /// Well-known server discovery protocol
+#[derive(Debug)]
 pub struct ServerDiscovery;
 
 impl ServerDiscovery {
@@ -104,11 +105,11 @@ impl ServerDiscovery {
             .map_err(|e| DiscoveryError::NetworkError(e.to_string()))?;
 
         match resp.status() {
-            reqwest::http::StatusCode::OK => resp
+            reqwest::StatusCode::OK => resp
                 .json::<AccountInfo>()
                 .await
                 .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string())),
-            reqwest::http::StatusCode::NOT_FOUND => {
+            reqwest::StatusCode::NOT_FOUND => {
                 Err(DiscoveryError::AccountNotFound(email.to_string()))
             }
             _ => Err(DiscoveryError::NetworkError(
@@ -132,7 +133,7 @@ impl ServerDiscovery {
             .map_err(|e| DiscoveryError::NetworkError(e.to_string()))?;
 
         match resp.status() {
-            reqwest::http::StatusCode::OK => {
+            reqwest::StatusCode::OK => {
                 let body: HashMap<String, String> = resp.json().await
                     .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()))?;
                 body.get("invitation_id")

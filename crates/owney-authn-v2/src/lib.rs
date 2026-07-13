@@ -7,7 +7,15 @@ pub mod approval;
 pub mod qr;
 
 pub use error::AuthError;
-pub use passkey::{PasskeyManager, PasskeyCredential, RegistrationOptions, RegistrationResponse, AuthenticationOptions, AuthenticationResponse};
+pub use passkey::{AuthenticationOptions, PasskeyCredential, PasskeyManager, RegistrationOptions};
+
+// Re-export the webauthn-rs types that API layers need to accept browser
+// responses and to persist the start/finish state objects.
+pub use webauthn_rs::prelude::{
+    AuthenticationResult, CreationChallengeResponse, Passkey, PasskeyAuthentication,
+    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
+    RequestChallengeResponse,
+};
 pub use recovery::RecoveryCodeManager;
 pub use approval::CrossDeviceApprovalManager;
 pub use qr::QrCodePairing;

@@ -66,14 +66,8 @@ pub enum AuthError {
     Internal(String),
 }
 
-impl From<webauthn_rs::error::WebauthnBuilder> for AuthError {
-    fn from(e: webauthn_rs::error::WebauthnBuilder) -> Self {
-        Self::WebAuthn(format!("{:?}", e))
-    }
-}
-
-impl From<webauthn_rs::error::WebauthnError> for AuthError {
-    fn from(e: webauthn_rs::error::WebauthnError) -> Self {
+impl From<webauthn_rs::prelude::WebauthnError> for AuthError {
+    fn from(e: webauthn_rs::prelude::WebauthnError) -> Self {
         Self::WebAuthn(format!("{:?}", e))
     }
 }

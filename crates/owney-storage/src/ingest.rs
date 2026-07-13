@@ -275,33 +275,35 @@ impl Storage {
             }
         });
 
-        // Auto-link contact from sender (fire-and-forget async, doesn't block ingest).
+        // Auto-link contact from sender. This is awaited (not detached):
+        // a detached task would hold a `Db` clone — and thus a live writer
+        // channel sender — which deadlocks `Storage::close()` while it waits
+        // for the writer thread to drain and exit. The upsert is a single
+        // INSERT OR IGNORE, so the cost of awaiting it is negligible.
         if let Some(from_addr) = contact_from {
-            let db = self.db.clone();
-            tokio::spawn(async move {
-                let result = db
-                    .call(move |conn| {
-                        let now = crate::unix_now();
-                        let email_lower = from_addr.to_lowercase();
-                        // Try insert, ignore if exists (upsert via INSERT OR IGNORE)
-                        conn.execute(
-                            "INSERT OR IGNORE INTO contacts (id, account_id, email, created_at, updated_at)
-                             VALUES (?1, ?2, ?3, ?4, ?4)",
-                            rusqlite::params![
-                                owney_core::ContactId::new().to_string(),
-                                account_id.to_string(),
-                                email_lower,
-                                now
-                            ],
-                        )?;
-                        Ok(())
-                    })
-                    .await;
+            let result = self
+                .db
+                .call(move |conn| {
+                    let now = crate::unix_now();
+                    let email_lower = from_addr.to_lowercase();
+                    // Try insert, ignore if exists (upsert via INSERT OR IGNORE)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO contacts (id, account_id, email, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?4)",
+                        rusqlite::params![
+                            owney_core::ContactId::new().to_string(),
+                            account_id.to_string(),
+                            email_lower,
+                            now
+                        ],
+                    )?;
+                    Ok(())
+                })
+                .await;
 
-                if let Err(e) = result {
-                    tracing::warn!("failed to auto-link contact: {}", e);
-                }
-            });
+            if let Err(e) = result {
+                tracing::warn!("failed to auto-link contact: {}", e);
+            }
         }
 
         Ok(ingested)

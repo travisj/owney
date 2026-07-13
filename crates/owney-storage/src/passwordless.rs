@@ -2,6 +2,7 @@
 
 use crate::error::StorageError;
 use chrono::{DateTime, Utc};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 /// Stored passkey credential.
@@ -871,6 +872,25 @@ mod tests {
 
         assert_eq!(retrieved.status, "pending");
         assert_eq!(retrieved.request_type, "web_login");
+
+        // Pair the approving device first (approved_by_device is a foreign
+        // key into device_pairings).
+        let device = DevicePairing {
+            id: "device-1".to_string(),
+            account_id: account.id.to_string(),
+            device_name: "Test iPhone".to_string(),
+            device_type: "ios".to_string(),
+            public_key: b"device-pubkey".to_vec(),
+            can_approve: true,
+            push_token: None,
+            paired_at: now,
+            last_used_at: None,
+            disabled: false,
+        };
+        storage
+            .save_device_pairing(&device)
+            .await
+            .expect("pair device");
 
         // Update status
         storage
