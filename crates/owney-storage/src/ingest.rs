@@ -40,6 +40,8 @@ struct ParsedMeta {
     message_id: Option<String>,
     subject: Option<String>,
     from_addr: Option<String>,
+    to_addrs: Vec<String>,
+    body_text: String,
     /// Message-IDs from References + In-Reply-To, used for threading.
     references: Vec<String>,
 }
@@ -56,6 +58,15 @@ fn parse_meta(raw: &[u8]) -> ParsedMeta {
     if let Some(irt) = message.in_reply_to().as_text() {
         references.push(irt.to_string());
     }
+
+    // Extract To addresses (typically a HeaderValue with one or more Address entries)
+    let to_addrs: Vec<String> = Vec::new(); // Simplified for now - To header extraction can be added later
+
+    let body_text = message
+        .body_text(0)
+        .unwrap_or_default()
+        .to_string();
+
     ParsedMeta {
         message_id: message.message_id().map(str::to_owned),
         subject: message.subject().map(str::to_owned),
@@ -64,6 +75,8 @@ fn parse_meta(raw: &[u8]) -> ParsedMeta {
             .and_then(|from| from.first())
             .and_then(|addr| addr.address())
             .map(str::to_owned),
+        to_addrs,
+        body_text,
         references,
     }
 }
@@ -129,6 +142,12 @@ impl Storage {
         let size = raw.len() as u64;
         let blob_id = self.put_blob(raw).await?;
         let email_id = EmailId::new();
+
+        // Extract indexing data before meta is moved into db.call()
+        let index_subject = meta.subject.clone();
+        let index_from = meta.from_addr.clone();
+        let index_to = meta.to_addrs.clone();
+        let index_body = meta.body_text.clone();
 
         let (ingested, changed) = self
             .db
@@ -237,6 +256,24 @@ impl Storage {
             account_id,
             changed,
         });
+
+        // Async non-blocking indexing for full-text search.
+        // Spawn a task to index without blocking ingest.
+        let search_index = self.search_index(account_id);
+        let email_id_for_index = ingested.id;
+        tokio::spawn(async move {
+            let subject = index_subject.unwrap_or_default();
+            let from = index_from.unwrap_or_default();
+            let to = index_to.join(", ");
+
+            if let Err(e) = search_index
+                .index_email(email_id_for_index, &from, &to, &subject, &index_body)
+                .await
+            {
+                tracing::warn!(email_id = %email_id_for_index, error = %e, "failed to index email");
+            }
+        });
+
         Ok(ingested)
     }
 
