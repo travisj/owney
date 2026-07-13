@@ -446,12 +446,16 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
             .await
             .unwrap_or_default();
 
+        // Extract email IDs from scored results (already ranked by relevance)
+        let search_email_ids: Vec<owney_core::EmailId> =
+            search_results.iter().map(|r| r.email_id).collect();
+
         // Filter search results by mailbox and keywords
         let filtered_ids = ctx
             .storage
             .filter_emails(
                 account_id,
-                search_results,
+                search_email_ids,
                 in_mailbox.as_deref(),
                 has_keyword.as_deref(),
                 not_keyword.as_deref(),

@@ -20,6 +20,13 @@ pub enum SearchError {
     NotReady(String),
 }
 
+/// Search result with BM25 score for ranking.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub email_id: EmailId,
+    pub score: f32,
+}
+
 /// Schema: email_id (primary key), from, to, subject, body (full-text).
 fn email_schema() -> Schema {
     let mut schema_builder = Schema::builder();
@@ -135,9 +142,9 @@ impl IndexReader {
         Ok(Self { index })
     }
 
-    /// Search for emails matching the query text.
-    /// Returns a vector of email IDs ranked by relevance.
-    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<EmailId>, SearchError> {
+    /// Search for emails matching the query text with BM25 scoring.
+    /// Returns ranked results with relevance scores (higher = more relevant).
+    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<SearchResult>, SearchError> {
         let schema = self.index.schema();
         let reader = self
             .index
@@ -164,13 +171,16 @@ impl IndexReader {
             .map_err(|e| SearchError::Tantivy(e.to_string()))?;
 
         let mut results = Vec::new();
-        for (_score, doc_address) in top_docs {
+        for (score, doc_address) in top_docs {
             if let Ok(doc) = searcher.doc(doc_address) {
                 if let Some(email_id_field) = schema.get_field("email_id") {
                     if let Some(email_id_val) = doc.get_first(email_id_field) {
                         if let Some(email_id_str) = email_id_val.as_text() {
                             if let Ok(email_id) = email_id_str.parse() {
-                                results.push(email_id);
+                                results.push(SearchResult {
+                                    email_id,
+                                    score,
+                                });
                             }
                         }
                     }
@@ -208,7 +218,8 @@ mod tests {
         let results = reader.search("test", 10).await.expect("search");
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], email_id);
+        assert_eq!(results[0].email_id, email_id);
+        assert!(results[0].score > 0.0);
     }
 
     #[tokio::test]
@@ -236,7 +247,8 @@ mod tests {
 
         let budget_results = reader.search("budget", 10).await.expect("search budget");
         assert_eq!(budget_results.len(), 1);
-        assert_eq!(budget_results[0], id1);
+        assert_eq!(budget_results[0].email_id, id1);
+        assert!(budget_results[0].score > 0.0);
     }
 
     #[tokio::test]

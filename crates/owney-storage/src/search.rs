@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use owney_core::EmailId;
-use owney_search::{IndexReader, IndexWriter, SearchError};
+use owney_search::{IndexReader, IndexWriter, SearchError, SearchResult};
 use tokio::sync::RwLock;
 
 /// Per-account search index manager. Wraps IndexWriter/IndexReader for thread-safe access.
@@ -63,8 +63,8 @@ impl SearchIndex {
         Ok(())
     }
 
-    /// Search for emails matching the query text.
-    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<EmailId>, SearchError> {
+    /// Search for emails matching the query text with BM25 scoring.
+    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<SearchResult>, SearchError> {
         let reader = IndexReader::open(self.index_path.clone())?;
         reader.search(query_text, limit).await
     }
@@ -94,7 +94,8 @@ mod tests {
 
         let results = index.search("important", 10).await.expect("search");
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], email_id);
+        assert_eq!(results[0].email_id, email_id);
+        assert!(results[0].score > 0.0);
     }
 
     #[tokio::test]
