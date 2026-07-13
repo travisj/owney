@@ -12,6 +12,7 @@ use owney_events::EventBus;
 use owney_storage::Storage;
 
 use crate::handler::ServerCore;
+use std::future::Future;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -224,6 +225,83 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+fn prompt_yes_no(question: &str) -> anyhow::Result<bool> {
+    use std::io::Write;
+    loop {
+        print!("{question} [y/n]: ");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .context("reading input")?;
+        match answer.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => {}
+        }
+    }
+}
+
+async fn setup_acme(config: &Config) -> anyhow::Result<()> {
+    use owney_acme::{AcmeClient, AcmeConfig, CertPaths, CloudflareProvider, Route53Provider};
+
+    println!("\nLet's Encrypt HTTPS Setup");
+    println!("=========================\n");
+
+    let email = prompt("Let's Encrypt admin email")?;
+    let provider_choice = prompt_default("DNS provider (cloudflare/route53)", "cloudflare")?;
+
+    let dns_provider: Box<dyn owney_acme::DnsProvider> = if provider_choice == "cloudflare" {
+        let api_token = prompt("Cloudflare API Token (from Profile → API Tokens)")?;
+        let zone_id = prompt("Cloudflare Zone ID (from domain overview page)")?;
+        Box::new(CloudflareProvider::new(api_token, zone_id))
+    } else if provider_choice == "route53" {
+        let zone_id = prompt("AWS Route53 Zone ID (from Route53 console)")?;
+        println!("Make sure AWS credentials are set in environment: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY");
+        Box::new(
+            Route53Provider::new(zone_id)
+                .await
+                .context("creating Route53 provider")?,
+        )
+    } else {
+        anyhow::bail!("unsupported DNS provider: {provider_choice}");
+    };
+
+    let use_staging = prompt_yes_no("Use Let's Encrypt staging (for testing, unlimited rate limits)?")?;
+
+    let cert_paths = CertPaths::in_dir(&config.storage.data_dir);
+
+    println!("\nRequesting certificate for {}...", config.server.hostname);
+    println!("This may take 30-60 seconds as we wait for DNS propagation.\n");
+
+    let acme_config = if use_staging {
+        AcmeConfig::staging_new(
+            vec![config.server.hostname.clone()],
+            email,
+            provider_choice,
+        )
+    } else {
+        AcmeConfig::new(
+            vec![config.server.hostname.clone()],
+            email,
+            provider_choice,
+        )
+    };
+
+    let client = AcmeClient::new(acme_config, dns_provider);
+    client
+        .request_certificate(&cert_paths)
+        .await
+        .context("requesting certificate")?;
+
+    println!("\n✓ Certificate provisioned successfully!");
+    println!("  Cert: {}", cert_paths.cert.display());
+    println!("  Key:  {}", cert_paths.key.display());
+    println!("\nNext: `mailserverd serve` will use HTTPS on port 443");
+
+    Ok(())
+}
+
 /// First-run wizard. Creates the config file when absent (interactive), then
 /// generates keys and prints the DNS record set.
 fn setup(config_path: PathBuf, verify: bool, timeout: u64) -> anyhow::Result<()> {
@@ -296,6 +374,16 @@ fn setup(config_path: PathBuf, verify: bool, timeout: u64) -> anyhow::Result<()>
             if verify {
                 verify_records(&records, timeout).await?;
             }
+
+            // Offer to set up ACME/Let's Encrypt
+            println!("\n--- HTTPS Setup ---");
+            let setup_https = prompt_yes_no("Set up HTTPS with Let's Encrypt?")?;
+            if setup_https {
+                setup_acme(&config).await?;
+            } else {
+                println!("⚠ Warning: HTTPS not configured. Set up manually or use a reverse proxy with TLS.");
+            }
+
             Ok(())
         })
 }
@@ -592,10 +680,14 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         std::time::Duration::from_secs(60),
     );
 
+    // Certificate renewal worker.
+    let renewal_worker = owney_api::renewal::spawn_renewal_worker(config.clone());
+
     tracing::info!(
         smtp_listeners = config.smtp.listen.len(),
         api = %config.api.listen,
         ai = config.ai.enabled,
+        acme = config.acme.is_some() && config.acme.as_ref().map(|a| a.enabled).unwrap_or(false),
         "ready — accepting SMTP, delivering outbound, serving JMAP"
     );
 
@@ -609,6 +701,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     api_task.abort();
     worker.abort();
     doctor_worker.abort();
+    renewal_worker.abort();
     if let Some(ai_worker) = &ai_worker {
         ai_worker.abort();
     }

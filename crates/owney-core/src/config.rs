@@ -17,9 +17,12 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub smtp: SmtpConfig,
-    /// Optional until the M2 setup wizard provisions ACME automatically.
+    /// Optional TLS configuration.
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    /// Optional ACME (Let's Encrypt) configuration for automatic HTTPS.
+    #[serde(default)]
+    pub acme: Option<AcmeConfigSection>,
     #[serde(default)]
     pub delivery: DeliveryConfig,
     #[serde(default)]
@@ -157,6 +160,34 @@ pub struct TlsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct AcmeConfigSection {
+    /// Enable ACME certificate provisioning.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Email for Let's Encrypt registration.
+    pub email: String,
+    /// DNS provider: "cloudflare" or "route53".
+    pub dns_provider: String,
+    /// Cloudflare API token (required if dns_provider = "cloudflare").
+    #[serde(default)]
+    pub cloudflare_api_token: Option<String>,
+    /// Cloudflare zone ID (required if dns_provider = "cloudflare").
+    #[serde(default)]
+    pub cloudflare_zone_id: Option<String>,
+    /// AWS Route53 zone ID (required if dns_provider = "route53").
+    #[serde(default)]
+    pub route53_zone_id: Option<String>,
+    /// Use Let's Encrypt staging (for testing, default false).
+    #[serde(default)]
+    pub staging: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// The mail domain this server is authoritative for (the part after `@`).
     pub domain: String,
@@ -283,10 +314,17 @@ max_errors = 10
 # Per-read idle timeout in seconds. Default 300.
 read_timeout_secs = 300
 
-# Optional until `setup` provisions certificates automatically (M2):
-# [tls]
-# cert_path = "/etc/mailserver/tls/fullchain.pem"
-# key_path = "/etc/mailserver/tls/privkey.pem"
+# Optional ACME configuration for automatic HTTPS via Let's Encrypt:
+# [acme]
+# enabled = true
+# email = "admin@example.com"
+# dns_provider = "cloudflare"  # or "route53"
+# # For Cloudflare:
+# cloudflare_api_token = "your-api-token"
+# cloudflare_zone_id = "your-zone-id"
+# # For Route53:
+# # route53_zone_id = "your-zone-id"  (uses AWS SDK credentials)
+# staging = false  # true for testing, false for production
 
 [delivery]
 # Uncomment to route all outbound mail through a relay instead of direct MX

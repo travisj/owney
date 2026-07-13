@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "bin/owneyd"]
-exclude = ["fuzz"]
+exclude = ["fuzz", "ui", "crates/owney-jmap"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,8 @@ authors = ["Travis Johnson <travisj@gmail.com>"]
 
 [workspace.dependencies]
 # internal crates
+owney-acme = { path = "crates/owney-acme" }
+owney-authn-v2 = { path = "crates/owney-authn-v2" }
 owney-ai = { path = "crates/owney-ai" }
 owney-backup = { path = "crates/owney-backup" }
 owney-doctor = { path = "crates/owney-doctor" }

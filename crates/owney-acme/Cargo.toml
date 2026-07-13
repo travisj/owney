@@ -1,0 +1,42 @@
+[package]
+name = "owney-acme"
+description = "ACME client for automated HTTPS certificate provisioning (Let's Encrypt)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# ACME protocol
+acme2 = "0.5"
+x509-parser = "0.16"
+
+# Cryptography & certificate generation
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
+
+# DNS providers
+cloudflare = "0.15"
+aws-sdk-route53 = "1.40"
+aws-config = "1.5"
+async-trait = "0.1"
+urlencoding = "2.1"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

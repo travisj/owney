@@ -12,6 +12,9 @@ pub enum StorageError {
     #[error("database error")]
     Sqlite(#[from] rusqlite::Error),
 
+    #[error("database error: {0}")]
+    Database(String),
+
     #[error("crypto failure: {0}")]
     Crypto(&'static str),
 

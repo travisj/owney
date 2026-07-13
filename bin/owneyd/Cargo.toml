@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 jmap-core = { workspace = true }
+owney-acme = { workspace = true }
 owney-api = { workspace = true }
 owney-ai = { workspace = true }
 owney-authn = { workspace = true }

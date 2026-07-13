@@ -1,0 +1,43 @@
+[package]
+name = "owney-authn-v2"
+description = "Passwordless authentication: WebAuthn passkeys, cross-device approval, recovery codes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+owney-core = { workspace = true }
+owney-storage = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+# WebAuthn / Passkeys
+webauthn-rs = "0.5"
+webauthn-rs-proto = "0.5"
+
+# Cryptography
+base64 = "0.22"
+sha2 = "0.10"
+hmac = "0.12"
+
+# Token generation
+rand = "0.8"
+hex = "0.4"
+
+# QR codes
+qrcode = "0.14"
+image = "0.25"  # for PNG encoding
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -335,6 +335,67 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX calendar_federation_by_calendar ON calendar_federation (calendar_id);
     CREATE INDEX calendar_federation_by_status ON calendar_federation (status);
     "#,
+    // 17 -> 18: Passwordless authentication (M12).
+    // Passkeys (WebAuthn/FIDO2), recovery codes, device pairings, and approval requests.
+    r#"
+    CREATE TABLE passkey_credentials (
+        id            BLOB PRIMARY KEY,
+        account_id    TEXT NOT NULL REFERENCES accounts(id),
+        device_name   TEXT NOT NULL,
+        public_key    BLOB NOT NULL,
+        counter       INTEGER NOT NULL DEFAULT 0,
+        backup_eligible INTEGER DEFAULT 0,
+        backup_state  INTEGER DEFAULT 0,
+        aaguid        BLOB,
+        created_at    INTEGER NOT NULL,
+        last_used_at  INTEGER,
+        disabled      INTEGER DEFAULT 0
+    ) STRICT;
+    CREATE INDEX passkey_by_account ON passkey_credentials (account_id);
+    CREATE INDEX passkey_by_disabled ON passkey_credentials (disabled);
+
+    CREATE TABLE recovery_codes (
+        id            TEXT PRIMARY KEY,
+        account_id    TEXT NOT NULL REFERENCES accounts(id),
+        code_hash     TEXT NOT NULL,
+        display_code  TEXT NOT NULL,
+        used          INTEGER DEFAULT 0,
+        used_at       INTEGER,
+        created_at    INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX recovery_by_account ON recovery_codes (account_id);
+    CREATE INDEX recovery_by_used ON recovery_codes (used);
+
+    CREATE TABLE device_pairings (
+        id            TEXT PRIMARY KEY,
+        account_id    TEXT NOT NULL REFERENCES accounts(id),
+        device_name   TEXT NOT NULL,
+        device_type   TEXT NOT NULL,
+        public_key    BLOB NOT NULL,
+        can_approve   INTEGER DEFAULT 1,
+        push_token    TEXT,
+        paired_at     INTEGER NOT NULL,
+        last_used_at  INTEGER,
+        disabled      INTEGER DEFAULT 0
+    ) STRICT;
+    CREATE INDEX pairing_by_account ON device_pairings (account_id);
+
+    CREATE TABLE approval_requests (
+        id                    TEXT PRIMARY KEY,
+        account_id            TEXT NOT NULL REFERENCES accounts(id),
+        source_device         TEXT NOT NULL,
+        request_type          TEXT NOT NULL,
+        challenge             TEXT NOT NULL,
+        created_at            INTEGER NOT NULL,
+        expires_at            INTEGER NOT NULL,
+        status                TEXT NOT NULL,
+        approved_by_device    TEXT REFERENCES device_pairings(id),
+        approved_at           INTEGER
+    ) STRICT;
+    CREATE INDEX approval_by_account ON approval_requests (account_id);
+    CREATE INDEX approval_by_expires ON approval_requests (expires_at);
+    CREATE INDEX approval_by_status ON approval_requests (status);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

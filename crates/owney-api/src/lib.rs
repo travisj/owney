@@ -3,10 +3,14 @@
 //! methods are registered on the dispatcher by ms-jmap-mail; this crate is
 //! transport only.
 
+pub mod auth;
 pub mod background_worker;
 pub mod calendar_sync;
+pub mod challenge_store;
 pub mod federation;
+pub mod https;
 pub mod push;
+pub mod renewal;
 pub mod wellknown;
 
 use std::sync::Arc;
@@ -18,6 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use jmap_core::{Dispatcher, Session};
 use owney_storage::{Account, Storage};
+use tower_http::services::ServeDir;
 
 /// Per-request context handed to every JMAP method handler.
 pub struct JmapCtx {
@@ -53,6 +58,9 @@ impl std::fmt::Debug for ApiState {
 }
 
 pub fn router(state: Arc<ApiState>) -> Router {
+    let static_dir = std::env::var("UI_STATIC_DIR")
+        .unwrap_or_else(|_| "./static".to_string());
+
     Router::new()
         .route("/healthz", get(healthz))
         .route("/.well-known/jmap", get(session))
@@ -68,6 +76,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/.well-known/openpgpkey/policy", get(|| async { "" }))
         .merge(wellknown::routes())
         .route("/mcp", post(mcp))
+        .fallback(ServeDir::new(&static_dir).append_index_html_on_directories(true))
         .with_state(state)
 }
 
