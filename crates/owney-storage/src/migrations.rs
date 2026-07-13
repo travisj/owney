@@ -273,6 +273,20 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX calendar_events_by_calendar ON calendar_events (calendar_id);
     CREATE INDEX calendar_events_by_time ON calendar_events (start, end);
     "#,
+    // 14 -> 15: Contacts with auto-linking from email senders (M9W3W2).
+    r#"
+    CREATE TABLE contacts (
+        id             TEXT PRIMARY KEY,
+        account_id     TEXT NOT NULL REFERENCES accounts(id),
+        email          TEXT NOT NULL COLLATE NOCASE,
+        name           TEXT,
+        phone          TEXT,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        UNIQUE (account_id, email)
+    ) STRICT;
+    CREATE INDEX contacts_by_account ON contacts (account_id);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

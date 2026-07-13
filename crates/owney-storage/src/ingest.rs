@@ -143,11 +143,12 @@ impl Storage {
         let blob_id = self.put_blob(raw).await?;
         let email_id = EmailId::new();
 
-        // Extract indexing data before meta is moved into db.call()
+        // Extract data before meta is moved into db.call()
         let index_subject = meta.subject.clone();
         let index_from = meta.from_addr.clone();
         let index_to = meta.to_addrs.clone();
         let index_body = meta.body_text.clone();
+        let contact_from = meta.from_addr.clone();
 
         let (ingested, changed) = self
             .db
@@ -273,6 +274,35 @@ impl Storage {
                 tracing::warn!(email_id = %email_id_for_index, error = %e, "failed to index email");
             }
         });
+
+        // Auto-link contact from sender (fire-and-forget async, doesn't block ingest).
+        if let Some(from_addr) = contact_from {
+            let db = self.db.clone();
+            tokio::spawn(async move {
+                let result = db
+                    .call(move |conn| {
+                        let now = crate::unix_now();
+                        let email_lower = from_addr.to_lowercase();
+                        // Try insert, ignore if exists (upsert via INSERT OR IGNORE)
+                        conn.execute(
+                            "INSERT OR IGNORE INTO contacts (id, account_id, email, created_at, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, ?4)",
+                            rusqlite::params![
+                                owney_core::ContactId::new().to_string(),
+                                account_id.to_string(),
+                                email_lower,
+                                now
+                            ],
+                        )?;
+                        Ok(())
+                    })
+                    .await;
+
+                if let Err(e) = result {
+                    tracing::warn!("failed to auto-link contact: {}", e);
+                }
+            });
+        }
 
         Ok(ingested)
     }
