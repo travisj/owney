@@ -399,6 +399,74 @@ impl Storage {
         });
         Ok(())
     }
+
+    /// Filter a list of email IDs by mailbox and keywords.
+    /// Used by Email/query when text search results need further filtering.
+    pub async fn filter_emails(
+        &self,
+        account_id: AccountId,
+        email_ids: Vec<EmailId>,
+        in_mailbox: Option<&str>,
+        has_keyword: Option<&str>,
+        not_keyword: Option<&str>,
+    ) -> Result<Vec<EmailId>, StorageError> {
+        if email_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let in_mailbox = in_mailbox.map(str::to_string);
+        let has_keyword = has_keyword.map(str::to_string);
+        let not_keyword = not_keyword.map(str::to_string);
+
+        self.db
+            .call(move |conn| {
+                let account = account_id.to_string();
+
+                // Build the WHERE clause based on filters
+                let mut where_parts = vec!["e.account_id = ?1".to_string()];
+                let email_id_strings: Vec<String> =
+                    email_ids.iter().map(|id| format!("'{}'", id)).collect();
+                where_parts.push(format!("e.id IN ({})", email_id_strings.join(",")));
+
+                if let Some(ref mailbox_id) = in_mailbox {
+                    where_parts.push(format!(
+                        "EXISTS (SELECT 1 FROM email_mailbox em WHERE em.email_id = e.id AND em.mailbox_id = '{}')",
+                        mailbox_id
+                    ));
+                }
+
+                if let Some(ref keyword) = has_keyword {
+                    where_parts.push(format!(
+                        "EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '{}')",
+                        keyword
+                    ));
+                }
+
+                if let Some(ref keyword) = not_keyword {
+                    where_parts.push(format!(
+                        "NOT EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '{}')",
+                        keyword
+                    ));
+                }
+
+                let where_clause = where_parts.join(" AND ");
+                let sql = format!(
+                    "SELECT e.id FROM emails e WHERE {} ORDER BY e.received_at DESC, e.id DESC",
+                    where_clause
+                );
+
+                let mut stmt = conn.prepare(&sql)?;
+                let ids: Vec<EmailId> = stmt
+                    .query_map([&account], |r| {
+                        let id_str: String = r.get(0)?;
+                        Ok(id_str.parse().unwrap_or_else(|_| EmailId::new()))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(ids)
+            })
+            .await
+    }
 }
 
 #[cfg(test)]

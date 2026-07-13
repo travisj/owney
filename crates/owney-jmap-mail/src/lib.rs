@@ -432,13 +432,54 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
 
     let position = args.position.unwrap_or(0).max(0) as usize;
     let limit = args.limit.unwrap_or(50).min(500);
-    let in_mailbox = args.filter.and_then(|f| f.in_mailbox);
+    let in_mailbox = args.filter.as_ref().and_then(|f| f.in_mailbox.clone());
+    let text_filter = args.filter.as_ref().and_then(|f| f.text.clone());
+    let has_keyword = args.filter.as_ref().and_then(|f| f.has_keyword.clone());
+    let not_keyword = args.filter.as_ref().and_then(|f| f.not_keyword.clone());
 
-    let (ids, total, state) = ctx
-        .storage
-        .query_emails(account_id, in_mailbox, position, limit)
-        .await
-        .map_err(storage_err)?;
+    let (ids, total, state) = if let Some(ref text) = text_filter {
+        // Use tantivy search if text filter is present
+        let search_index = ctx.storage.search_index(account_id);
+        let search_limit = 1000; // Get more results for further filtering
+        let search_results = search_index
+            .search(text, search_limit)
+            .await
+            .unwrap_or_default();
+
+        // Filter search results by mailbox and keywords
+        let filtered_ids = ctx
+            .storage
+            .filter_emails(
+                account_id,
+                search_results,
+                in_mailbox.as_deref(),
+                has_keyword.as_deref(),
+                not_keyword.as_deref(),
+            )
+            .await
+            .map_err(storage_err)?;
+
+        let total = filtered_ids.len() as u64;
+        let state = ctx
+            .storage
+            .state(account_id, DataType::Email)
+            .await
+            .map_err(storage_err)?;
+
+        let ids: Vec<String> = filtered_ids
+            .iter()
+            .skip(position)
+            .take(limit)
+            .map(|id| id.to_string())
+            .collect();
+
+        (ids, total, state)
+    } else {
+        ctx.storage
+            .query_emails(account_id, in_mailbox, position, limit)
+            .await
+            .map_err(storage_err)?
+    };
 
     Ok(json!({
         "accountId": args.account_id,
