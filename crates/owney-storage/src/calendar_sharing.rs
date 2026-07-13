@@ -364,4 +364,98 @@ mod tests {
 
         storage.close();
     }
+
+    #[tokio::test]
+    async fn accept_sharing_updates_status() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+
+        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
+        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+
+        let calendar =
+            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+
+        let sharing = storage
+            .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Sharing)
+            .await
+            .expect("share");
+
+        assert_eq!(sharing.status, "pending");
+
+        storage.accept_sharing(&sharing.id).await.expect("accept");
+
+        // Verify the sharing is now accepted by fetching it
+        let shared = storage.get_shared_calendars(bob.id).await.expect("list shared");
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].status, "accepted");
+
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn get_shared_calendars_returns_all_sharings() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+
+        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
+        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+
+        let cal1 = storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("cal1");
+        let cal2 = storage.create_calendar(alice.id, "Work".to_string(), None).await.expect("cal2");
+
+        let _share1 = storage
+            .share_calendar(cal1.id, alice.id, bob.id, super::SharingType::Sharing)
+            .await
+            .expect("share1");
+
+        let _share2 = storage
+            .share_calendar(cal2.id, alice.id, bob.id, super::SharingType::Delegation)
+            .await
+            .expect("share2");
+
+        let shared = storage.get_shared_calendars(bob.id).await.expect("list shared");
+        assert_eq!(shared.len(), 2);
+
+        // One should be sharing, one should be delegation
+        let types: std::collections::HashSet<_> =
+            shared.iter().map(|s| s.sharing_type).collect();
+        assert!(types.contains(&super::SharingType::Sharing));
+        assert!(types.contains(&super::SharingType::Delegation));
+
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn federation_invitation_workflow() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+
+        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
+        let calendar =
+            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+
+        // Create federated invitation
+        let invitation = storage
+            .create_federation_invitation(
+                calendar.id,
+                alice.id,
+                "bob@remote.example.com".to_string(),
+                Some("https://remote.example.com".to_string()),
+                super::SharingType::Delegation,
+            )
+            .await
+            .expect("create invitation");
+
+        assert_eq!(invitation.status, "pending");
+        assert_eq!(invitation.invitee_email, "bob@remote.example.com");
+
+        // Accept invitation
+        storage
+            .accept_federation_invitation(&invitation.id)
+            .await
+            .expect("accept");
+
+        storage.close();
+    }
 }

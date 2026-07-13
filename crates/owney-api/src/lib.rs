@@ -3,6 +3,7 @@
 //! methods are registered on the dispatcher by ms-jmap-mail; this crate is
 //! transport only.
 
+pub mod calendar_sync;
 pub mod federation;
 pub mod push;
 pub mod wellknown;
