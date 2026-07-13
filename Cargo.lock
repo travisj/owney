@@ -2598,6 +2598,7 @@ dependencies = [
  "owney-core",
  "owney-delivery",
  "owney-events",
+ "owney-spam",
  "owney-storage",
  "serde",
  "serde_json",

@@ -9,29 +9,25 @@ use owney_storage::Storage;
 
 /// Classify a message as ham or spam using Naive Bayes.
 /// Returns P(spam | tokens) if training data exists, None if not trained yet.
-///
-/// TODO: Wire this to storage.get_spam_token_counts() once implemented.
-/// For now, returns None (no Bayes classification).
-pub async fn classify(_storage: &Storage, _account_id: AccountId, raw: &[u8]) -> Result<Option<f32>, String> {
-    let _tokens = tokenize(raw);
-    // Stub: no training data available yet
-    Ok(None)
+pub async fn classify(storage: &Storage, account_id: AccountId, raw: &[u8]) -> Result<Option<f32>, String> {
+    let tokens = tokenize(raw);
+    if tokens.is_empty() {
+        return Ok(None);
+    }
 
-    /* TODO: Once storage integration is ready, replace with:
     match storage.get_spam_token_counts(account_id, &tokens).await {
         Ok(counts) => {
             if counts.is_empty() {
-                return Ok(None); // No training data
+                return Ok(None); // No training data yet
             }
             Ok(Some(bayes_probability(&counts, &tokens)))
         }
-        Err(_) => Ok(None), // Training table doesn't exist yet
+        Err(_) => Ok(None), // No training data, return neutral
     }
-    */
 }
 
 /// Tokenize a message into words (split on non-alphanumeric, lowercased, min 3 chars).
-fn tokenize(raw: &[u8]) -> Vec<String> {
+pub fn tokenize(raw: &[u8]) -> Vec<String> {
     let msg = String::from_utf8_lossy(raw);
     msg.split(|c: char| !c.is_alphanumeric())
         .map(|w| w.to_lowercase())

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use jmap_core::{Dispatcher, MethodError};
 use owney_api::JmapCtx;
 use owney_core::DataType;
+use owney_spam;
 use owney_storage::EmailRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1076,10 +1077,29 @@ async fn apply_update(
         None => None,
     };
 
+    // Track if $junk status changed for Bayes training
+    let old_is_junk = row.keywords.iter().any(|k| k == "$junk");
+    let new_is_junk = keywords
+        .as_ref()
+        .map(|kw| kw.iter().any(|k| k == "$junk"))
+        .unwrap_or(old_is_junk);
+
     ctx.storage
         .update_email(account_id, email_id, keywords, mailbox_ids)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+
+    // Train Bayes classifier if $junk status changed
+    if old_is_junk != new_is_junk {
+        let blob_id: owney_core::BlobId = row.blob_id.parse().map_err(|_| "bad blob".to_owned())?;
+        if let Ok(raw) = ctx.storage.get_blob(blob_id).await {
+            let tokens = owney_spam::bayes::tokenize(&raw);
+            let is_spam = new_is_junk; // new_is_junk=true means moved TO junk (spam training)
+            let _ = ctx.storage.train_spam_tokens(account_id, &tokens, is_spam).await;
+        }
+    }
+
+    Ok(())
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, MethodError> {

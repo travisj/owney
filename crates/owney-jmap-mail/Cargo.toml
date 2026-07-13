@@ -11,6 +11,7 @@ authors.workspace = true
 jmap-core = { workspace = true }
 owney-api = { workspace = true }
 owney-core = { workspace = true }
+owney-spam = { workspace = true }
 owney-storage = { workspace = true }
 mail-parser = { workspace = true }
 serde = { workspace = true }
