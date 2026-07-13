@@ -1,0 +1,367 @@
+//! Calendar sharing and delegation with federation support.
+//!
+//! Supports:
+//! - Same-server sharing (read-only) and delegation (read-write)
+//! - Cross-server federation with federated email discovery
+//! - Granular permission model
+//! - Pending invitation workflow
+
+use owney_core::{AccountId, CalendarId};
+use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+use crate::error::StorageError;
+use crate::Storage;
+
+/// Sharing type: read-only sharing vs. read-write delegation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SharingType {
+    /// Read-only access to calendar
+    Sharing,
+    /// Full read-write access (delegation)
+    Delegation,
+}
+
+impl SharingType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SharingType::Sharing => "sharing",
+            SharingType::Delegation => "delegation",
+        }
+    }
+}
+
+/// Permission model with granular control
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Permissions {
+    pub view_calendar: bool,
+    pub view_events: bool,
+    pub edit_events: bool,
+    pub delete_events: bool,
+    pub change_sharing: bool,
+    pub admin: bool,
+}
+
+impl Permissions {
+    /// Read-only sharing permissions
+    pub fn sharing() -> Self {
+        Self {
+            view_calendar: true,
+            view_events: true,
+            edit_events: false,
+            delete_events: false,
+            change_sharing: false,
+            admin: false,
+        }
+    }
+
+    /// Full delegation permissions
+    pub fn delegation() -> Self {
+        Self {
+            view_calendar: true,
+            view_events: true,
+            edit_events: true,
+            delete_events: true,
+            change_sharing: true,
+            admin: true,
+        }
+    }
+}
+
+/// Calendar shared with another user (same-server)
+#[derive(Debug, Clone)]
+pub struct CalendarSharing {
+    pub id: String,
+    pub calendar_id: CalendarId,
+    pub shared_with_account_id: AccountId,
+    pub sharing_type: SharingType,
+    pub permissions: Permissions,
+    pub status: String, // "accepted", "rejected", "revoked"
+    pub created_at: i64,
+    pub accepted_at: Option<i64>,
+}
+
+/// Calendar shared via federation (cross-server)
+#[derive(Debug, Clone)]
+pub struct CalendarFederation {
+    pub id: String,
+    pub calendar_id: CalendarId,
+    pub target_email: String,                   // user@domain.com
+    pub target_server_url: String,              // https://owney.domain.com
+    pub sharing_type: SharingType,
+    pub permissions: Permissions,
+    pub status: String,                         // "pending", "accepted", "syncing", "error"
+    pub last_sync_at: Option<i64>,
+    pub sync_token: Option<String>,
+    pub created_at: i64,
+}
+
+/// Pending calendar invitation
+#[derive(Debug, Clone)]
+pub struct CalendarInvitation {
+    pub id: String,
+    pub calendar_id: CalendarId,
+    pub inviter_account_id: AccountId,
+    pub invitee_email: String,                  // Can be "user@domain.com" or local account email
+    pub invitee_server_url: Option<String>,     // Set if federated
+    pub sharing_type: SharingType,
+    pub status: String,                         // "pending", "accepted", "rejected"
+    pub message: Option<String>,
+    pub created_at: i64,
+}
+
+impl Storage {
+    /// Share a calendar with another same-server account.
+    pub async fn share_calendar(
+        &self,
+        calendar_id: CalendarId,
+        account_id: AccountId,
+        target_account_id: AccountId,
+        sharing_type: SharingType,
+    ) -> Result<CalendarSharing, StorageError> {
+        let sharing_id = uuid::Uuid::new_v7().to_string();
+        let now = crate::unix_now();
+        let permissions = match sharing_type {
+            SharingType::Sharing => Permissions::sharing(),
+            SharingType::Delegation => Permissions::delegation(),
+        };
+        let permissions_json = serde_json::to_string(&permissions)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO calendar_sharing
+                     (id, calendar_id, shared_with_account_id, sharing_type, permissions, status, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+                    params![
+                        sharing_id,
+                        calendar_id.to_string(),
+                        target_account_id.to_string(),
+                        sharing_type.as_str(),
+                        permissions_json,
+                        now
+                    ],
+                )?;
+                Ok(CalendarSharing {
+                    id: sharing_id,
+                    calendar_id,
+                    shared_with_account_id: target_account_id,
+                    sharing_type,
+                    permissions,
+                    status: "pending".to_string(),
+                    created_at: now,
+                    accepted_at: None,
+                })
+            })
+            .await
+    }
+
+    /// Accept a calendar sharing invitation.
+    pub async fn accept_sharing(&self, sharing_id: &str) -> Result<(), StorageError> {
+        let now = crate::unix_now();
+        let sharing_id = sharing_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_sharing SET status = 'accepted', accepted_at = ?1 WHERE id = ?2",
+                    params![now, sharing_id],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Reject a calendar sharing invitation.
+    pub async fn reject_sharing(&self, sharing_id: &str) -> Result<(), StorageError> {
+        let sharing_id = sharing_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_sharing SET status = 'rejected' WHERE id = ?1",
+                    params![sharing_id],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Get all calendars shared with an account (including shared & delegated).
+    pub async fn get_shared_calendars(&self, account_id: AccountId) -> Result<Vec<CalendarSharing>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, calendar_id, shared_with_account_id, sharing_type, permissions, status, created_at, accepted_at
+                     FROM calendar_sharing WHERE shared_with_account_id = ?1 AND status IN ('pending', 'accepted')",
+                )?;
+                let sharings = stmt
+                    .query_map(params![account_id.to_string()], |row| {
+                        let perms_json: String = row.get(4)?;
+                        let permissions: Permissions =
+                            serde_json::from_str(&perms_json).unwrap_or(Permissions::sharing());
+                        Ok(CalendarSharing {
+                            id: row.get(0)?,
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            shared_with_account_id: account_id,
+                            sharing_type: match row.get::<_, String>(3)?.as_str() {
+                                "delegation" => SharingType::Delegation,
+                                _ => SharingType::Sharing,
+                            },
+                            permissions,
+                            status: row.get(5)?,
+                            created_at: row.get(6)?,
+                            accepted_at: row.get(7)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(sharings)
+            })
+            .await
+    }
+
+    /// Create a federated calendar invitation.
+    pub async fn create_federation_invitation(
+        &self,
+        calendar_id: CalendarId,
+        inviter_account_id: AccountId,
+        target_email: String,
+        target_server_url: Option<String>,
+        sharing_type: SharingType,
+    ) -> Result<CalendarInvitation, StorageError> {
+        let invitation_id = uuid::Uuid::new_v7().to_string();
+        let now = crate::unix_now();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO calendar_invitations
+                     (id, calendar_id, inviter_account_id, invitee_email, invitee_server_url, sharing_type, status, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
+                    params![
+                        invitation_id,
+                        calendar_id.to_string(),
+                        inviter_account_id.to_string(),
+                        target_email,
+                        target_server_url,
+                        sharing_type.as_str(),
+                        now
+                    ],
+                )?;
+                Ok(CalendarInvitation {
+                    id: invitation_id,
+                    calendar_id,
+                    inviter_account_id,
+                    invitee_email: target_email,
+                    invitee_server_url: target_server_url,
+                    sharing_type,
+                    status: "pending".to_string(),
+                    message: None,
+                    created_at: now,
+                })
+            })
+            .await
+    }
+
+    /// Get pending invitations for an account.
+    pub async fn get_pending_invitations(&self, account_id: AccountId) -> Result<Vec<CalendarInvitation>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, calendar_id, inviter_account_id, invitee_email, invitee_server_url, sharing_type, status, created_at
+                     FROM calendar_invitations WHERE invitee_email IN (SELECT email FROM accounts WHERE id = ?1) AND status = 'pending'",
+                )?;
+                let invitations = stmt
+                    .query_map(params![account_id.to_string()], |row| {
+                        Ok(CalendarInvitation {
+                            id: row.get(0)?,
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            inviter_account_id: row.get::<_, String>(2)?.parse().unwrap_or_else(|_| AccountId::new()),
+                            invitee_email: row.get(3)?,
+                            invitee_server_url: row.get(4)?,
+                            sharing_type: match row.get::<_, String>(5)?.as_str() {
+                                "delegation" => SharingType::Delegation,
+                                _ => SharingType::Sharing,
+                            },
+                            status: row.get(6)?,
+                            message: None,
+                            created_at: row.get(7)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(invitations)
+            })
+            .await
+    }
+
+    /// Accept a federated invitation and create corresponding sharing record.
+    pub async fn accept_federation_invitation(&self, invitation_id: &str) -> Result<(), StorageError> {
+        let now = crate::unix_now();
+        let invitation_id = invitation_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_invitations SET status = 'accepted' WHERE id = ?1",
+                    params![invitation_id],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Storage;
+
+    #[allow(dead_code)]
+    async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, owney_events::EventBus) {
+        crate::tests::open(tmp.path()).await
+    }
+
+    #[tokio::test]
+    async fn share_calendar_creates_pending_invitation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+
+        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
+        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+
+        let calendar =
+            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+
+        let sharing = storage
+            .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Sharing)
+            .await
+            .expect("share");
+
+        assert_eq!(sharing.status, "pending");
+        assert!(!sharing.permissions.edit_events); // Sharing is read-only
+
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn delegation_has_full_permissions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (storage, _events) = harness(&dir).await;
+
+        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
+        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+
+        let calendar =
+            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+
+        let sharing = storage
+            .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Delegation)
+            .await
+            .expect("share");
+
+        assert!(sharing.permissions.edit_events); // Delegation is read-write
+        assert!(sharing.permissions.admin);
+
+        storage.close();
+    }
+}

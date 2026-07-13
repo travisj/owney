@@ -287,6 +287,54 @@ const MIGRATIONS: &[&str] = &[
     ) STRICT;
     CREATE INDEX contacts_by_account ON contacts (account_id);
     "#,
+    // 15 -> 16: Calendar sharing for same-server sharing and delegation.
+    r#"
+    CREATE TABLE calendar_sharing (
+        id                      TEXT PRIMARY KEY,
+        calendar_id             TEXT NOT NULL REFERENCES calendars(id),
+        shared_with_account_id  TEXT NOT NULL REFERENCES accounts(id),
+        sharing_type            TEXT NOT NULL,  -- "sharing", "delegation"
+        permissions             TEXT NOT NULL,  -- JSON: {view_calendar, view_events, edit_events, delete_events, change_sharing, admin}
+        status                  TEXT NOT NULL,  -- "pending", "accepted", "rejected", "revoked"
+        created_at              INTEGER NOT NULL,
+        accepted_at             INTEGER,
+        UNIQUE (calendar_id, shared_with_account_id)
+    ) STRICT;
+    CREATE INDEX calendar_sharing_by_account ON calendar_sharing (shared_with_account_id);
+    CREATE INDEX calendar_sharing_by_calendar ON calendar_sharing (calendar_id);
+
+    CREATE TABLE calendar_invitations (
+        id                  TEXT PRIMARY KEY,
+        calendar_id         TEXT NOT NULL REFERENCES calendars(id),
+        inviter_account_id  TEXT NOT NULL REFERENCES accounts(id),
+        invitee_email       TEXT NOT NULL,                    -- Can be federated: user@domain.com or local
+        invitee_server_url  TEXT,                             -- Set if federated
+        sharing_type        TEXT NOT NULL,                    -- "sharing", "delegation"
+        status              TEXT NOT NULL,                    -- "pending", "accepted", "rejected"
+        message             TEXT,
+        created_at          INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX calendar_invitations_by_invitee ON calendar_invitations (invitee_email);
+    CREATE INDEX calendar_invitations_by_calendar ON calendar_invitations (calendar_id);
+    "#,
+    // 16 -> 17: Cross-server calendar federation with sync support.
+    r#"
+    CREATE TABLE calendar_federation (
+        id              TEXT PRIMARY KEY,
+        calendar_id     TEXT NOT NULL REFERENCES calendars(id),
+        target_email    TEXT NOT NULL,                        -- user@domain.com
+        target_server_url TEXT NOT NULL,                      -- https://owney.domain.com
+        sharing_type    TEXT NOT NULL,                        -- "sharing", "delegation"
+        permissions     TEXT NOT NULL,                        -- JSON permissions
+        status          TEXT NOT NULL,                        -- "pending", "accepted", "syncing", "error"
+        sync_token      TEXT,                                 -- Opaque token for incremental sync
+        last_sync_at    INTEGER,
+        created_at      INTEGER NOT NULL,
+        UNIQUE (calendar_id, target_email)
+    ) STRICT;
+    CREATE INDEX calendar_federation_by_calendar ON calendar_federation (calendar_id);
+    CREATE INDEX calendar_federation_by_status ON calendar_federation (status);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

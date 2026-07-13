@@ -3,7 +3,9 @@
 //! methods are registered on the dispatcher by ms-jmap-mail; this crate is
 //! transport only.
 
+pub mod federation;
 pub mod push;
+pub mod wellknown;
 
 use std::sync::Arc;
 
@@ -62,6 +64,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/jmap/upload/{account_id}", post(upload))
         .route("/.well-known/openpgpkey/hu/{hash}", get(wkd_key))
         .route("/.well-known/openpgpkey/policy", get(|| async { "" }))
+        .merge(wellknown::routes())
         .route("/mcp", post(mcp))
         .with_state(state)
 }

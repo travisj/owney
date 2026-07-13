@@ -5,6 +5,8 @@
 //! per-type modseqs maintained by ms-storage — `/changes` is a direct range
 //! query, exactly the discipline the storage layer enforces on every write.
 
+mod calendar_methods;
+
 use std::sync::Arc;
 
 use jmap_core::{Dispatcher, MethodError};
@@ -57,6 +59,13 @@ pub fn register(dispatcher: &mut Dispatcher<JmapCtx>) {
     dispatcher.register("EmailSubmission/set", SUBMISSION_CAPABILITY, submission_set);
     dispatcher.register("ChatPreference/get", MAIL_CAPABILITY, chat_preference_get);
     dispatcher.register("ChatPreference/set", MAIL_CAPABILITY, chat_preference_set);
+
+    // Calendar methods
+    dispatcher.add_capability(calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_capability());
+    dispatcher.register("Calendar/get", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_get);
+    dispatcher.register("Calendar/share", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_share);
+    dispatcher.register("CalendarInvitation/get", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_invitation_get);
+    dispatcher.register("CalendarInvitation/set", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_invitation_set);
 }
 
 fn storage_err(err: owney_storage::StorageError) -> MethodError {
