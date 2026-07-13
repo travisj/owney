@@ -290,6 +290,83 @@ impl Storage {
             })
             .await
     }
+
+    /// Get calendar events modified since timestamp (for federation sync).
+    pub async fn list_calendar_events_since(
+        &self,
+        calendar_id: CalendarId,
+        since_timestamp: i64,
+    ) -> Result<Vec<CalendarEvent>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, calendar_id, title, description, start, end, rrule, created_at, updated_at
+                     FROM calendar_events WHERE calendar_id = ?1 AND updated_at > ?2 ORDER BY updated_at",
+                )?;
+                let events = stmt
+                    .query_map(params![calendar_id.to_string(), since_timestamp], |row| {
+                        Ok(CalendarEvent {
+                            id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| EventId::new()),
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            title: row.get(2)?,
+                            description: row.get(3)?,
+                            start: row.get(4)?,
+                            end: row.get(5)?,
+                            rrule: row.get(6)?,
+                            created_at: row.get(7)?,
+                            updated_at: row.get(8)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(events)
+            })
+            .await
+    }
+
+    /// Get specific calendar events by ID (for sync).
+    pub async fn get_calendar_events_by_ids(
+        &self,
+        calendar_id: CalendarId,
+        event_ids: Vec<EventId>,
+    ) -> Result<Vec<CalendarEvent>, StorageError> {
+        if event_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.db
+            .call(move |conn| {
+                let placeholders = event_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let query = format!(
+                    "SELECT id, calendar_id, title, description, start, end, rrule, created_at, updated_at
+                     FROM calendar_events WHERE calendar_id = ? AND id IN ({})",
+                    placeholders
+                );
+
+                let mut stmt = conn.prepare(&query)?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = vec![&calendar_id.to_string()];
+                for id in &event_ids {
+                    params.push(&id.to_string());
+                }
+
+                let events = stmt
+                    .query_map(params.as_slice(), |row| {
+                        Ok(CalendarEvent {
+                            id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| EventId::new()),
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            title: row.get(2)?,
+                            description: row.get(3)?,
+                            start: row.get(4)?,
+                            end: row.get(5)?,
+                            rrule: row.get(6)?,
+                            created_at: row.get(7)?,
+                            updated_at: row.get(8)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(events)
+            })
+            .await
+    }
 }
 
 #[cfg(test)]

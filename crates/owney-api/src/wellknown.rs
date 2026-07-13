@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{extract::Path, Router};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 use owney_storage::Storage;
@@ -23,6 +23,7 @@ pub fn routes() -> Router {
         .route("/.well-known/owney/server", get(server_metadata))
         .route("/.well-known/owney/account/:email", get(account_lookup))
         .route("/.well-known/owney/calendar/invite", post(receive_invitation))
+        .route("/.well-known/owney/calendar/sync/:federation_id", get(calendar_sync))
 }
 
 /// GET /.well-known/owney/server
@@ -142,4 +143,119 @@ async fn receive_invitation(
                 .into_response()
         }
     }
+}
+
+/// GET /.well-known/owney/calendar/sync/:federation_id
+/// Fetch calendar changes for federation sync (polling protocol).
+/// Query params: token (optional sync token), since (optional unix timestamp)
+async fn calendar_sync(
+    State(storage): State<Arc<Storage>>,
+    Path(federation_id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let sync_token = params.get("token").cloned();
+    let since_timestamp = params
+        .get("since")
+        .and_then(|s| s.parse::<i64>().ok());
+
+    // Get federation record to verify it exists and has a calendar
+    let federation = match storage.get_federation(&federation_id).await {
+        Ok(Some(f)) => f,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(json!({
+                    "error": "not_found",
+                    "error_description": "Federation not found"
+                })),
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "server_error"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Determine since_timestamp for sync
+    let sync_since = if let Some(ts) = since_timestamp {
+        // Use explicit timestamp
+        ts
+    } else if sync_token.is_none() {
+        // Initial sync - fetch all events
+        0
+    } else {
+        // Incremental sync - use federation's last sync time
+        federation.last_sync_at.unwrap_or(0)
+    };
+
+    // Fetch events modified since sync_since
+    let events = match storage.list_calendar_events_since(federation.calendar_id, sync_since).await {
+        Ok(events) => events,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "server_error"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Convert events to sync response format
+    let event_values: Vec<Value> = events
+        .into_iter()
+        .map(|e| {
+            json!({
+                "id": e.id.to_string(),
+                "title": e.title,
+                "description": e.description,
+                "start": e.start,
+                "end": e.end,
+                "rrule": e.rrule,
+                "created_at": e.created_at,
+                "updated_at": e.updated_at,
+                "removed": false
+            })
+        })
+        .collect();
+
+    // Generate new sync token (format: timestamp:counter)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let new_sync_token = format!("{}:v1", now);
+
+    // Get calendar info
+    let calendar = match storage.get_calendar(federation.calendar_id).await {
+        Ok(Some(c)) => c,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(json!({"error": "not_found"})),
+            )
+                .into_response();
+        }
+    };
+
+    (
+        StatusCode::OK,
+        axum::Json(json!({
+            "federation_id": federation_id,
+            "sync_token": new_sync_token,
+            "calendar": {
+                "id": calendar.id.to_string(),
+                "name": calendar.name,
+                "description": calendar.description,
+                "updated_at": calendar.updated_at
+            },
+            "events": event_values,
+            "removed_event_ids": [],
+            "has_more_changes": false
+        })),
+    )
+        .into_response()
 }

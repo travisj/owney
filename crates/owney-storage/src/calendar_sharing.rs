@@ -310,6 +310,91 @@ impl Storage {
             })
             .await
     }
+
+    /// Get federation record by ID.
+    pub async fn get_federation(
+        &self,
+        federation_id: &str,
+    ) -> Result<Option<CalendarFederation>, StorageError> {
+        let federation_id = federation_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.query_row(
+                    "SELECT id, calendar_id, target_email, target_server_url, sharing_type, permissions, status, sync_token, last_sync_at, created_at
+                     FROM calendar_federation WHERE id = ?1",
+                    [federation_id],
+                    |row| {
+                        let perms_json: String = row.get(5)?;
+                        let permissions: Permissions = serde_json::from_str(&perms_json).unwrap_or(Permissions::sharing());
+                        Ok(CalendarFederation {
+                            id: row.get(0)?,
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            target_email: row.get(2)?,
+                            target_server_url: row.get(3)?,
+                            sharing_type: match row.get::<_, String>(4)?.as_str() {
+                                "delegation" => SharingType::Delegation,
+                                _ => SharingType::Sharing,
+                            },
+                            permissions,
+                            status: row.get(6)?,
+                            sync_token: row.get(7)?,
+                            last_sync_at: row.get(8)?,
+                            created_at: row.get(9)?,
+                        })
+                    },
+                )
+                .optional()
+            })
+            .await
+    }
+
+    /// Update federation sync token and timestamp after successful sync.
+    pub async fn update_federation_sync_token(
+        &self,
+        federation_id: &str,
+        sync_token: Option<String>,
+    ) -> Result<(), StorageError> {
+        let now = crate::unix_now();
+        let federation_id = federation_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_federation SET sync_token = ?1, last_sync_at = ?2, status = 'syncing' WHERE id = ?3",
+                    params![sync_token, now, federation_id],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Get calendar events modified since timestamp (for sync).
+    pub async fn list_calendar_events_since(
+        &self,
+        calendar_id: owney_core::CalendarId,
+        since_timestamp: i64,
+    ) -> Result<Vec<(owney_core::EventId, bool)>, StorageError> {
+        // Returns (event_id, is_deleted) tuples
+        // Note: This is a simplified version. In Phase 2+, we'd track soft deletes.
+
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, updated_at FROM calendar_events WHERE calendar_id = ?1 AND updated_at > ?2 ORDER BY updated_at",
+                )?;
+                let events = stmt
+                    .query_map(params![calendar_id.to_string(), since_timestamp], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?.parse().unwrap_or_else(|_| owney_core::EventId::new()),
+                            false, // is_deleted: would need soft delete tracking
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(events)
+            })
+            .await
+    }
 }
 
 #[cfg(test)]
