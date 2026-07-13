@@ -395,6 +395,60 @@ impl Storage {
             })
             .await
     }
+
+    /// Get all active federations that need syncing.
+    pub async fn list_active_federations(&self) -> Result<Vec<CalendarFederation>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, calendar_id, target_email, target_server_url, sharing_type, permissions, status, sync_token, last_sync_at, created_at
+                     FROM calendar_federation WHERE status IN ('accepted', 'syncing')
+                     ORDER BY last_sync_at ASC NULLS FIRST",
+                )?;
+                let federations = stmt
+                    .query_map([], |row| {
+                        let perms_json: String = row.get(5)?;
+                        let permissions: Permissions =
+                            serde_json::from_str(&perms_json).unwrap_or(Permissions::sharing());
+                        Ok(CalendarFederation {
+                            id: row.get(0)?,
+                            calendar_id: row.get::<_, String>(1)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            target_email: row.get(2)?,
+                            target_server_url: row.get(3)?,
+                            sharing_type: match row.get::<_, String>(4)?.as_str() {
+                                "delegation" => SharingType::Delegation,
+                                _ => SharingType::Sharing,
+                            },
+                            permissions,
+                            status: row.get(6)?,
+                            sync_token: row.get(7)?,
+                            last_sync_at: row.get(8)?,
+                            created_at: row.get(9)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(federations)
+            })
+            .await
+    }
+
+    /// Mark federation as having an error during sync.
+    pub async fn mark_federation_error(
+        &self,
+        federation_id: &str,
+    ) -> Result<(), StorageError> {
+        let federation_id = federation_id.to_string();
+
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_federation SET status = 'error' WHERE id = ?1",
+                    params![federation_id],
+                )?;
+                Ok(())
+            })
+            .await
+    }
 }
 
 #[cfg(test)]
