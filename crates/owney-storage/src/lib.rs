@@ -27,6 +27,7 @@ mod mail_queries;
 mod migrations;
 mod pgp_store;
 mod queue;
+mod search;
 mod spam_store;
 mod tokens;
 
@@ -48,6 +49,7 @@ pub use keys::{MASTER_KEY_FILE, MasterKey};
 pub use mail_queries::{ChangesResult, EmailRow, MailboxRow};
 pub use pgp_store::PgpPeer;
 pub use queue::{AttemptOutcome, QueueItem};
+pub use search::SearchIndex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
@@ -83,6 +85,12 @@ impl Storage {
 
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// Get the search index manager for an account.
+    pub fn search_index(&self, account_id: AccountId) -> SearchIndex {
+        let index_path = self.data_dir.join("search").join(account_id.to_string());
+        SearchIndex::new(index_path)
     }
 
     /// Create an account with its default mailbox set.

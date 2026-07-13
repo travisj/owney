@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 owney-core = { workspace = true }
 owney-events = { workspace = true }
+owney-search = { workspace = true }
 blake3 = { workspace = true }
 chacha20poly1305 = { workspace = true }
 getrandom = { workspace = true }
