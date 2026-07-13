@@ -245,6 +245,34 @@ const MIGRATIONS: &[&str] = &[
     // 12 -> 13: Full-text search index tracking via tantivy.
     // emails.search_indexed: whether this email has been indexed into the tantivy FTS engine.
     "ALTER TABLE emails ADD COLUMN search_indexed INTEGER DEFAULT 0;",
+    // 13 -> 14: Calendar support (M9W3).
+    // calendars: user's calendar collections (Personal, Work, etc.)
+    // calendar_events: events with optional recurrence rules (RFC 5545 subset)
+    r#"
+    CREATE TABLE calendars (
+        id             TEXT PRIMARY KEY,
+        account_id     TEXT NOT NULL REFERENCES accounts(id),
+        name           TEXT NOT NULL,
+        description    TEXT,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX calendars_by_account ON calendars (account_id);
+
+    CREATE TABLE calendar_events (
+        id             TEXT PRIMARY KEY,
+        calendar_id    TEXT NOT NULL REFERENCES calendars(id),
+        title          TEXT NOT NULL,
+        description    TEXT,
+        start          INTEGER NOT NULL,
+        end            INTEGER NOT NULL,
+        rrule          TEXT,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX calendar_events_by_calendar ON calendar_events (calendar_id);
+    CREATE INDEX calendar_events_by_time ON calendar_events (start, end);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

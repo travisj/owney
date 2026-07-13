@@ -64,6 +64,14 @@ uuid_id!(
     /// A single email-submission record (RFC 8621 §7).
     EmailSubmissionId
 );
+uuid_id!(
+    /// A calendar collection.
+    CalendarId
+);
+uuid_id!(
+    /// A single calendar event.
+    EventId
+);
 
 /// A client-supplied creation reference (RFC 8620 §3.6.1). Distinct
 /// from server-assigned ids so the type system can catch mismatches;

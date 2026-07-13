@@ -18,6 +18,7 @@
 mod ai_store;
 mod aliases;
 mod blob;
+mod calendar;
 mod chat_preferences;
 mod db;
 mod error;
@@ -41,6 +42,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 pub use ai_store::AiAction;
 pub use aliases::Alias;
 pub use blob::BlobStore;
+pub use calendar::{Calendar, CalendarEvent};
 pub use chat_preferences::{ChatMode, ChatPreference};
 pub use db::Db;
 pub use error::StorageError;
