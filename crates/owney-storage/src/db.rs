@@ -23,6 +23,15 @@ pub struct Db {
     handle: Option<JoinHandle<()>>,
 }
 
+impl Clone for Db {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            handle: None,
+        }
+    }
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let mut conn = Connection::open(path)?;

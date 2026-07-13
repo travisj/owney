@@ -34,7 +34,7 @@ mod tokens;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use owney_core::{AccountId, BlobId, DataType, MailboxId, ModSeq};
+use owney_core::{AccountId, BlobId, DataType, EmailId, MailboxId, ModSeq};
 use owney_events::{Event, EventBus};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -91,6 +91,84 @@ impl Storage {
     pub fn search_index(&self, account_id: AccountId) -> SearchIndex {
         let index_path = self.data_dir.join("search").join(account_id.to_string());
         SearchIndex::new(index_path)
+    }
+
+    /// Start background indexing of unindexed emails for all accounts.
+    /// Spawns a task that runs silently (doesn't block startup).
+    pub fn start_background_indexing(&self) {
+        let db = self.db.clone();
+        let data_dir = self.data_dir.clone();
+
+        tokio::spawn(async move {
+            // Get all accounts
+            let accounts = db
+                .call(|conn| {
+                    let mut stmt = conn.prepare("SELECT id FROM accounts WHERE disabled_at IS NULL")?;
+                    let ids: Vec<String> =
+                        stmt.query_map([], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?;
+                    Ok(ids)
+                })
+                .await;
+
+            if let Ok(account_ids) = accounts {
+                for account_id_str in account_ids {
+                    if let Ok(account_id) = account_id_str.parse::<AccountId>() {
+                        let search_index = SearchIndex::new(data_dir.join("search").join(account_id.to_string()));
+
+                        // Get unindexed emails for this account
+                        if let Ok(Some(unindexed)) = db
+                            .call(move |conn| {
+                                let mut stmt = conn.prepare(
+                                    "SELECT e.id, e.from_addr, e.subject FROM emails e
+                                     WHERE e.account_id = ?1 AND e.search_indexed = 0
+                                     LIMIT 100",
+                                )?;
+                                let rows: Vec<(String, Option<String>, Option<String>)> = stmt
+                                    .query_map([&account_id.to_string()], |r| {
+                                        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                                    })?
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                Ok(if rows.is_empty() { None } else { Some(rows) })
+                            })
+                            .await
+                        {
+                            for (email_id_str, from, subject) in unindexed {
+                                if let Ok(email_id) = email_id_str.parse::<EmailId>() {
+                                    let from = from.unwrap_or_default();
+                                    let subject = subject.unwrap_or_default();
+                                    let to = String::new(); // Could extract from headers if needed
+                                    let body = String::new(); // Body extraction requires blob access
+
+                                    if let Err(e) = search_index
+                                        .index_email(email_id, &from, &to, &subject, &body)
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            email_id = %email_id,
+                                            error = %e,
+                                            "failed to index email in background task"
+                                        );
+                                    } else {
+                                        // Mark as indexed
+                                        let _ = db
+                                            .call(move |conn| {
+                                                conn.execute(
+                                                    "UPDATE emails SET search_indexed = 1 WHERE id = ?1",
+                                                    params![email_id.to_string()],
+                                                )?;
+                                                Ok(())
+                                            })
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::info!("background search indexing task completed");
+        });
     }
 
     /// Create an account with its default mailbox set.
