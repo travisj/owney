@@ -36,6 +36,8 @@ pub struct EmailRow {
     /// PGP disposition JSON (`emails.pgp_status`), when the message was
     /// encrypted or signed.
     pub pgp_status: Option<String>,
+    /// Chat mode flag: true if email was submitted with chat intent.
+    pub chat_mode: bool,
 }
 
 /// Result of a `/changes` computation for one data type.
@@ -90,7 +92,7 @@ impl Storage {
                 let mut out = Vec::with_capacity(ids.len());
                 let mut email_stmt = conn.prepare(
                     "SELECT id, thread_id, blob_id, message_id, subject, from_addr,
-                            received_at, size, pgp_status
+                            received_at, size, pgp_status, chat_mode
                      FROM emails WHERE account_id = ?1 AND id = ?2",
                 )?;
                 let mut mailbox_stmt =
@@ -114,6 +116,7 @@ impl Storage {
                                 mailbox_ids: Vec::new(),
                                 keywords: Vec::new(),
                                 pgp_status: row.get(8)?,
+                                chat_mode: row.get::<_, i64>(9)? != 0,
                             })
                         });
                     let mut row = match row {

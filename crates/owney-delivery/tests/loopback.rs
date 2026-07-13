@@ -34,7 +34,7 @@ impl MailHandler for ReceiverCore {
         self.storage
             .ingest_email(self.account_id, mail.raw, "inbox", None)
             .await
-            .map_err(|err| DeliverError(err.to_string()))?;
+            .map_err(|err| DeliverError::Temporary(err.to_string()))?;
         Ok(())
     }
 }
@@ -257,4 +257,99 @@ async fn unreachable_relay_defers_with_backoff() {
     assert_eq!(state, "queued", "still retrying, not failed");
     assert!(attempts >= 1);
     assert!(last_error.is_some());
+}
+
+#[tokio::test]
+async fn chat_mode_flag_stored_and_retrieved() {
+    // Verify that chat_mode is correctly stored and retrieved from emails.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Arc::new(Storage::open(dir.path(), EventBus::new(8)).expect("open"));
+    let account = storage
+        .create_account("alice@example.com", None)
+        .await
+        .expect("account");
+
+    let raw = test_message();
+
+    // Ingest with chat_mode=true
+    let chat_ingested = storage
+        .ingest_email_with_chat(account.id, raw.clone(), "inbox", None, true)
+        .await
+        .expect("ingest chat");
+
+    // Ingest with chat_mode=false
+    let normal_ingested = storage
+        .ingest_email_with_chat(account.id, raw.clone(), "inbox", None, false)
+        .await
+        .expect("ingest normal");
+
+    // Retrieve and verify chat_mode is set correctly
+    let rows = storage
+        .emails_by_ids(account.id, vec![chat_ingested.id, normal_ingested.id])
+        .await
+        .expect("fetch");
+
+    assert_eq!(rows.len(), 2);
+
+    let chat_row = rows.iter().find(|r| r.id == chat_ingested.id.to_string()).expect("find chat email");
+    assert_eq!(chat_row.chat_mode, true, "chat-mode email should have chat_mode=true");
+
+    let normal_row = rows.iter().find(|r| r.id == normal_ingested.id.to_string()).expect("find normal email");
+    assert_eq!(normal_row.chat_mode, false, "normal email should have chat_mode=false");
+}
+
+#[tokio::test]
+async fn chat_preference_storage_operations() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let storage = Arc::new(Storage::open(dir.path(), EventBus::new(8)).expect("open"));
+    let account = storage
+        .create_account("alice@example.com", None)
+        .await
+        .expect("account");
+
+    // Set auto_chat for bob
+    storage
+        .set_chat_preference(account.id, "bob@example.com", owney_storage::ChatMode::AutoChat)
+        .await
+        .expect("set");
+
+    // Verify retrieval
+    let pref = storage
+        .get_chat_preference(account.id, "bob@example.com")
+        .await
+        .expect("get");
+    assert_eq!(pref, owney_storage::ChatMode::AutoChat);
+
+    // Set never_chat for spam
+    storage
+        .set_chat_preference(account.id, "spam@bot.com", owney_storage::ChatMode::NeverChat)
+        .await
+        .expect("set");
+
+    // List should show both
+    let prefs = storage
+        .list_chat_preferences(account.id)
+        .await
+        .expect("list");
+    assert_eq!(prefs.len(), 2);
+
+    // Delete one
+    storage
+        .delete_chat_preference(account.id, "bob@example.com")
+        .await
+        .expect("delete");
+
+    let prefs = storage
+        .list_chat_preferences(account.id)
+        .await
+        .expect("list");
+    assert_eq!(prefs.len(), 1);
+    assert_eq!(prefs[0].contact_email, "spam@bot.com");
+
+    // Default when not set is RespectSender
+    let default_pref = storage
+        .get_chat_preference(account.id, "unknown@example.com")
+        .await
+        .expect("default");
+    assert_eq!(default_pref, owney_storage::ChatMode::RespectSender);
 }

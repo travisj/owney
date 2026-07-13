@@ -243,6 +243,7 @@ impl McpCtx {
                 raw,
                 owney_storage::MailboxTarget::Id(drafts),
                 None,
+                false,
             )
             .await?;
         self.storage

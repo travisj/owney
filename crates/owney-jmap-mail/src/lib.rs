@@ -54,6 +54,8 @@ pub fn register(dispatcher: &mut Dispatcher<JmapCtx>) {
     );
     dispatcher.register("Identity/get", SUBMISSION_CAPABILITY, identity_get);
     dispatcher.register("EmailSubmission/set", SUBMISSION_CAPABILITY, submission_set);
+    dispatcher.register("ChatPreference/get", MAIL_CAPABILITY, chat_preference_get);
+    dispatcher.register("ChatPreference/set", MAIL_CAPABILITY, chat_preference_set);
 }
 
 fn storage_err(err: owney_storage::StorageError) -> MethodError {
@@ -342,6 +344,7 @@ async fn email_json(ctx: &JmapCtx, row: &EmailRow, fetch_body: bool) -> Result<V
             .pgp_status
             .as_deref()
             .and_then(|s| serde_json::from_str::<Value>(s).ok()),
+        "chatMode": row.chat_mode,
     });
 
     let blob_id = row
@@ -617,6 +620,11 @@ async fn apply_create(
         .parse()
         .map_err(|_| "bad mailbox id".to_owned())?;
 
+    let chat_mode = object
+        .get("chatMode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
     let raw = compose_from_jmap(&ctx.account, object)?;
     let ingested = ctx
         .storage
@@ -625,6 +633,7 @@ async fn apply_create(
             raw,
             owney_storage::MailboxTarget::Id(first_mailbox),
             None,
+            chat_mode,
         )
         .await
         .map_err(|err| err.to_string())?;
@@ -746,6 +755,131 @@ async fn identity_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErr
             "mayDelete": false,
         }],
         "notFound": [],
+    }))
+}
+
+/// ChatPreference/get: list chat mode preferences for all contacts.
+async fn chat_preference_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let prefs = ctx
+        .storage
+        .list_chat_preferences(account_id)
+        .await
+        .map_err(storage_err)?;
+
+    let mut list = Vec::new();
+    for pref in prefs {
+        list.push(json!({
+            "id": pref.contact_email,
+            "contactEmail": pref.contact_email,
+            "preference": pref.preference.as_str(),
+        }));
+    }
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "state": "0",
+        "list": list,
+        "notFound": [],
+    }))
+}
+
+/// ChatPreference/set: update chat mode preferences.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatPrefSetArgs {
+    account_id: String,
+    #[serde(default)]
+    create: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    update: Option<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    destroy: Option<Vec<String>>,
+}
+
+async fn chat_preference_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: ChatPrefSetArgs = parse(args)?;
+    let account_id = check_account(&ctx, &args.account_id)?;
+
+    let mut created = serde_json::Map::new();
+    let mut updated = serde_json::Map::new();
+    let mut destroyed = Vec::new();
+
+    for (client_id, object) in args.create.unwrap_or_default() {
+        let result: Result<Value, String> = async {
+            let contact_email = object
+                .get("contactEmail")
+                .and_then(Value::as_str)
+                .ok_or("contactEmail is required".to_owned())?;
+            let pref_str = object
+                .get("preference")
+                .and_then(Value::as_str)
+                .ok_or("preference is required".to_owned())?;
+            let preference =
+                owney_storage::ChatMode::from_str(pref_str)
+                    .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
+
+            ctx.storage
+                .set_chat_preference(account_id, contact_email, preference)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            Ok(json!({
+                "id": contact_email,
+            }))
+        }
+        .await;
+
+        match result {
+            Ok(id_obj) => {
+                created.insert(client_id, id_obj);
+            }
+            Err(err) => {
+                created.insert(client_id, json!({"type": "serverFail", "description": err}));
+            }
+        }
+    }
+
+    for (contact_email, object) in args.update.unwrap_or_default() {
+        let result: Result<(), String> = async {
+            let pref_str = object
+                .get("preference")
+                .and_then(Value::as_str)
+                .ok_or("preference is required".to_owned())?;
+            let preference =
+                owney_storage::ChatMode::from_str(pref_str)
+                    .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
+
+            ctx.storage
+                .set_chat_preference(account_id, &contact_email, preference)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        .await;
+
+        if result.is_ok() {
+            updated.insert(contact_email, json!({}));
+        }
+    }
+
+    for contact_email in args.destroy.unwrap_or_default() {
+        let result = ctx
+            .storage
+            .delete_chat_preference(account_id, &contact_email)
+            .await;
+        if result.is_ok() {
+            destroyed.push(contact_email);
+        }
+    }
+
+    Ok(json!({
+        "accountId": args.account_id,
+        "created": created,
+        "updated": updated,
+        "destroyed": destroyed,
     }))
 }
 

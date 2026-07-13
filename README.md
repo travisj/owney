@@ -2,7 +2,7 @@
 
 A mailserver for today: a single Rust binary you deploy on your own domain in minutes. It speaks flawless, standards-compliant SMTP to the rest of the world — but its native interface is a modern realtime API (JMAP + REST + MCP), with AI woven into the core (screening, categorization, summarization, drafting, one-click unsubscribe) and OpenPGP handled so invisibly that you never touch a keyring.
 
-**Status: M7 Week 3 — IMAP read-only bridge shipped; preparing for public beta.**
+**Status: M8 — Multi-user accounts, email aliases, spam filtering shipped; preparing for public beta.**
 
 ## What It Does
 
@@ -24,7 +24,7 @@ Email is the most successful federated protocol ever shipped — and it has bare
 
 owney splits the difference: a mailserver sophisticated enough for production deliverability, simple enough to run on a $5/month VPS, and intelligent enough to be genuinely useful. JMAP + MCP mean external clients (web, mobile, desktop) can speak the server's native language. Publishing `jmap-core` as a standalone library unblocks the first open JMAP server ecosystem.
 
-## Current State (M7 Week 3)
+## Current State (M8)
 
 ### What's Working
 
@@ -43,6 +43,12 @@ owney splits the difference: a mailserver sophisticated enough for production de
 ✅ **Self-hosting polish**: static releases (Linux x86_64/aarch64, macOS), Docker wrapper, scheduled consistent backups with tested restore, safe self-update, continuous `doctor` daemon.
 
 ✅ **IMAP read-only bridge**: IMAP4rev2 connection-oriented mail access; write operations redirect to JMAP for audit trail.
+
+✅ **Multi-user accounts**: Admin commands to create, disable, enable, delete accounts. Per-account authentication via bearer tokens.
+
+✅ **Email aliases**: Permanent and temporary (expiring) aliases per account. Mail to aliases automatically routes to the primary inbox. Aliases appear in JMAP Identity list.
+
+✅ **Spam filtering**: DNSBL lookups (SpamHaus, SpamCop), heuristic rules (missing headers, ALL-CAPS, suspicious attachments), per-account Naive Bayes classifier. Configurable reject (550) and quarantine (Junk folder) thresholds.
 
 ### What's Not Yet
 
@@ -78,7 +84,7 @@ owneyd admin create-account you@example.com
 # 5. Point your mail client to mail.example.com (JMAP or IMAP)
 ```
 
-See `docs/GETTING-STARTED.md` for a fuller walkthrough.
+See `docs/GETTING-STARTED.md` for a fuller walkthrough, then `docs/USAGE.md` for operational tasks (admin commands, aliases, spam filtering) and end-user features.
 
 ## Status & Roadmap
 
@@ -91,10 +97,11 @@ See `docs/GETTING-STARTED.md` for a fuller walkthrough.
 | **M4** | ✅ Done | PGP-native (keygen, WKD, Autocrypt, opportunistic encryption) |
 | **M5** | ✅ Done | AI + MCP (Claude provider, audit + undo, Screener, Categorizer, Summarizer) |
 | **M6** | ✅ Done | Self-hosting polish (static releases, Docker, backups, doctor daemon) |
-| **M7** | 🔄 Week 3 | Hardening, fuzzing, IMAP read-only bridge, **public beta launch** |
-| **M8** (Q4 2026) | 📋 Planned | Calendar/Contacts, tantivy FTS, cloud backup integrations |
+| **M7** | ✅ Done | Hardening, fuzzing, IMAP read-only bridge |
+| **M8** | ✅ Done | Multi-user accounts, email aliases, spam filtering |
+| **M9** (Q4 2026) | 📋 Planned | Calendar/Contacts, tantivy FTS, cloud backup integrations |
 
-**Next**: Public beta July 2026. See `docs/BETA-LAUNCH.md` for launch checklist.
+**Next**: Public beta July 2026. See `docs/BETA-LAUNCH.md` for launch checklist. For operational usage, see `docs/USAGE.md`.
 
 ## Principles
 

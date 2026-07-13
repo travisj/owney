@@ -109,9 +109,25 @@ impl MailHandler for ServerCore {
                 "inbox"
             };
 
+            // Determine chat mode based on recipient's preferences
+            let recipient_chat_pref = self
+                .storage
+                .get_chat_preference(account.id, &mail.mail_from)
+                .await
+                .unwrap_or(owney_storage::ChatMode::RespectSender);
+            let chat_mode = match recipient_chat_pref {
+                owney_storage::ChatMode::AutoChat => true,
+                owney_storage::ChatMode::NeverChat => false,
+                owney_storage::ChatMode::RespectSender => {
+                    // For now, always false (sender can't mark as chat in SMTP).
+                    // Will be true when JMAP submission includes chatMode flag.
+                    false
+                }
+            };
+
             let ingested = self
                 .storage
-                .ingest_email(account.id, pgp.raw, mailbox, verdict_json.clone())
+                .ingest_email_with_chat(account.id, pgp.raw, mailbox, verdict_json.clone(), chat_mode)
                 .await
                 .map_err(|err| DeliverError::Temporary(err.to_string()))?;
 
@@ -135,6 +151,7 @@ impl MailHandler for ServerCore {
                 auth = %verdict.summary(),
                 spam_score = spam_verdict.score,
                 mailbox = mailbox,
+                chat_mode = chat_mode,
                 "message delivered"
             );
         }

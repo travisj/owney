@@ -92,6 +92,26 @@ impl Storage {
             raw,
             MailboxTarget::Role(mailbox_role),
             auth_results,
+            false,
+        )
+        .await
+    }
+
+    /// Ingest a raw message with explicit chat_mode flag.
+    pub async fn ingest_email_with_chat(
+        &self,
+        account_id: AccountId,
+        raw: Vec<u8>,
+        mailbox_role: &'static str,
+        auth_results: Option<String>,
+        chat_mode: bool,
+    ) -> Result<IngestedEmail, StorageError> {
+        self.ingest_email_into(
+            account_id,
+            raw,
+            MailboxTarget::Role(mailbox_role),
+            auth_results,
+            chat_mode,
         )
         .await
     }
@@ -103,6 +123,7 @@ impl Storage {
         raw: Vec<u8>,
         target: MailboxTarget,
         auth_results: Option<String>,
+        chat_mode: bool,
     ) -> Result<IngestedEmail, StorageError> {
         let meta = parse_meta(&raw);
         let size = raw.len() as u64;
@@ -168,8 +189,8 @@ impl Storage {
                     "INSERT INTO emails
                        (id, account_id, thread_id, blob_id, message_id, subject,
                         from_addr, received_at, size, created_modseq, updated_modseq,
-                        auth_results)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11)",
+                        auth_results, chat_mode)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12)",
                     params![
                         email_id.to_string(),
                         account_id.to_string(),
@@ -182,6 +203,7 @@ impl Storage {
                         size as i64,
                         email_seq.0 as i64,
                         auth_results,
+                        if chat_mode { 1 } else { 0 },
                     ],
                 )?;
                 tx.execute(

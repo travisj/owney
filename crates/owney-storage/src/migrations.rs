@@ -224,6 +224,21 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, token)
     ) STRICT, WITHOUT ROWID;
     "#,
+    // 10 -> 11: Chat mode for real-time email delivery.
+    // emails.chat_mode: whether this email was submitted with chat intent (sender-initiated).
+    // chat_preferences: per-recipient settings for how to handle chat from each contact.
+    r#"
+    ALTER TABLE emails ADD COLUMN chat_mode INTEGER DEFAULT 0;
+    CREATE TABLE chat_preferences (
+        account_id  TEXT NOT NULL REFERENCES accounts(id),
+        contact_email TEXT NOT NULL COLLATE NOCASE,
+        preference  TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (account_id, contact_email)
+    ) STRICT;
+    CREATE INDEX chat_preferences_by_account ON chat_preferences (account_id);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {
