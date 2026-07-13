@@ -418,6 +418,21 @@ struct QueryFilter {
     /// no-op (matches everything).
     #[serde(default)]
     text: Option<String>,
+    /// RFC 8621 — filter emails received after this unix timestamp
+    #[serde(default)]
+    after: Option<i64>,
+    /// RFC 8621 — filter emails received before this unix timestamp
+    #[serde(default)]
+    before: Option<i64>,
+    /// RFC 8621 — filter to a specific thread
+    #[serde(default)]
+    all_in_thread: Option<String>,
+    /// RFC 8621 — filter to flagged emails (presence of $flagged keyword)
+    #[serde(default)]
+    is_flagged: Option<bool>,
+    /// RFC 8621 — filter to unread emails (absence of $Seen keyword)
+    #[serde(default)]
+    is_unread: Option<bool>,
 }
 
 // Per RFC 8621 §6.3.2, `Email/query` filters live in a single object.
@@ -436,6 +451,11 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
     let text_filter = args.filter.as_ref().and_then(|f| f.text.clone());
     let has_keyword = args.filter.as_ref().and_then(|f| f.has_keyword.clone());
     let not_keyword = args.filter.as_ref().and_then(|f| f.not_keyword.clone());
+    let after = args.filter.as_ref().and_then(|f| f.after);
+    let before = args.filter.as_ref().and_then(|f| f.before);
+    let all_in_thread = args.filter.as_ref().and_then(|f| f.all_in_thread.clone());
+    let is_flagged = args.filter.as_ref().and_then(|f| f.is_flagged);
+    let is_unread = args.filter.as_ref().and_then(|f| f.is_unread);
 
     let (ids, total, state) = if let Some(ref text) = text_filter {
         // Use tantivy search if text filter is present
@@ -450,7 +470,7 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
         let search_email_ids: Vec<owney_core::EmailId> =
             search_results.iter().map(|r| r.email_id).collect();
 
-        // Filter search results by mailbox and keywords
+        // Filter search results by mailbox, keywords, dates, and thread
         let filtered_ids = ctx
             .storage
             .filter_emails(
@@ -459,6 +479,11 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
                 in_mailbox.as_deref(),
                 has_keyword.as_deref(),
                 not_keyword.as_deref(),
+                after,
+                before,
+                all_in_thread.as_deref(),
+                is_flagged,
+                is_unread,
             )
             .await
             .map_err(storage_err)?;
@@ -478,7 +503,29 @@ async fn email_query(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErro
             .collect();
 
         (ids, total, state)
+    } else if after.is_some()
+        || before.is_some()
+        || all_in_thread.is_some()
+        || is_flagged.is_some()
+        || is_unread.is_some()
+    {
+        // Use enhanced query with RFC 8621 filters
+        ctx.storage
+            .query_emails_with_filters(
+                account_id,
+                in_mailbox,
+                after,
+                before,
+                all_in_thread,
+                is_flagged,
+                is_unread,
+                position,
+                limit,
+            )
+            .await
+            .map_err(storage_err)?
     } else {
+        // Simple query with just mailbox filter
         ctx.storage
             .query_emails(account_id, in_mailbox, position, limit)
             .await

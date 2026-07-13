@@ -400,7 +400,7 @@ impl Storage {
         Ok(())
     }
 
-    /// Filter a list of email IDs by mailbox and keywords.
+    /// Filter a list of email IDs by mailbox, keywords, dates, and thread.
     /// Used by Email/query when text search results need further filtering.
     pub async fn filter_emails(
         &self,
@@ -409,6 +409,11 @@ impl Storage {
         in_mailbox: Option<&str>,
         has_keyword: Option<&str>,
         not_keyword: Option<&str>,
+        after: Option<i64>,
+        before: Option<i64>,
+        all_in_thread: Option<&str>,
+        is_flagged: Option<bool>,
+        is_unread: Option<bool>,
     ) -> Result<Vec<EmailId>, StorageError> {
         if email_ids.is_empty() {
             return Ok(Vec::new());
@@ -417,6 +422,7 @@ impl Storage {
         let in_mailbox = in_mailbox.map(str::to_string);
         let has_keyword = has_keyword.map(str::to_string);
         let not_keyword = not_keyword.map(str::to_string);
+        let all_in_thread = all_in_thread.map(str::to_string);
 
         self.db
             .call(move |conn| {
@@ -449,6 +455,38 @@ impl Storage {
                     ));
                 }
 
+                if let Some(after_ts) = after {
+                    where_parts.push(format!("e.received_at > {}", after_ts));
+                }
+
+                if let Some(before_ts) = before {
+                    where_parts.push(format!("e.received_at < {}", before_ts));
+                }
+
+                if let Some(ref thread_id) = all_in_thread {
+                    where_parts.push(format!("e.thread_id = '{}'", thread_id));
+                }
+
+                if is_flagged == Some(true) {
+                    where_parts.push(
+                        "EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Flagged')".to_string()
+                    );
+                } else if is_flagged == Some(false) {
+                    where_parts.push(
+                        "NOT EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Flagged')".to_string()
+                    );
+                }
+
+                if is_unread == Some(true) {
+                    where_parts.push(
+                        "NOT EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Seen')".to_string()
+                    );
+                } else if is_unread == Some(false) {
+                    where_parts.push(
+                        "EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Seen')".to_string()
+                    );
+                }
+
                 let where_clause = where_parts.join(" AND ");
                 let sql = format!(
                     "SELECT e.id FROM emails e WHERE {} ORDER BY e.received_at DESC, e.id DESC",
@@ -464,6 +502,92 @@ impl Storage {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(ids)
+            })
+            .await
+    }
+
+    /// Query emails with RFC 8621 filters (for non-text path).
+    pub async fn query_emails_with_filters(
+        &self,
+        account_id: AccountId,
+        in_mailbox: Option<String>,
+        after: Option<i64>,
+        before: Option<i64>,
+        all_in_thread: Option<String>,
+        is_flagged: Option<bool>,
+        is_unread: Option<bool>,
+        position: usize,
+        limit: usize,
+    ) -> Result<(Vec<String>, u64, ModSeq), StorageError> {
+        self.db
+            .call(move |conn| {
+                let account = account_id.to_string();
+
+                // Build WHERE clause
+                let mut where_parts = vec![format!("e.account_id = '{}'", account)];
+
+                if let Some(ref mailbox_id) = in_mailbox {
+                    where_parts.push(format!(
+                        "EXISTS (SELECT 1 FROM email_mailbox em WHERE em.email_id = e.id AND em.mailbox_id = '{}')",
+                        mailbox_id
+                    ));
+                }
+
+                if let Some(after_ts) = after {
+                    where_parts.push(format!("e.received_at > {}", after_ts));
+                }
+
+                if let Some(before_ts) = before {
+                    where_parts.push(format!("e.received_at < {}", before_ts));
+                }
+
+                if let Some(ref thread_id) = all_in_thread {
+                    where_parts.push(format!("e.thread_id = '{}'", thread_id));
+                }
+
+                if is_flagged == Some(true) {
+                    where_parts.push(
+                        "EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Flagged')".to_string()
+                    );
+                } else if is_flagged == Some(false) {
+                    where_parts.push(
+                        "NOT EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Flagged')".to_string()
+                    );
+                }
+
+                if is_unread == Some(true) {
+                    where_parts.push(
+                        "NOT EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Seen')".to_string()
+                    );
+                } else if is_unread == Some(false) {
+                    where_parts.push(
+                        "EXISTS (SELECT 1 FROM email_keyword ek WHERE ek.email_id = e.id AND ek.keyword = '$Seen')".to_string()
+                    );
+                }
+
+                let where_clause = where_parts.join(" AND ");
+                let sql = format!(
+                    "SELECT id FROM emails e WHERE {} ORDER BY e.received_at DESC, e.id DESC LIMIT {} OFFSET {}",
+                    where_clause, limit, position
+                );
+
+                let ids: Vec<String> = conn
+                    .prepare(&sql)?
+                    .query_map([], |r| r.get(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let total_sql = format!("SELECT count(*) FROM emails e WHERE {}", where_clause);
+                let total: i64 = conn.query_row(&total_sql, [], |r| r.get(0))?;
+
+                let state: Option<i64> = conn
+                    .query_row(
+                        "SELECT modseq FROM states WHERE account_id = ?1 AND data_type = 'Email'",
+                        [&account],
+                        |r| r.get(0),
+                    )
+                    .ok();
+
+                Ok((ids, total as u64, ModSeq(state.unwrap_or(0) as u64)))
             })
             .await
     }
