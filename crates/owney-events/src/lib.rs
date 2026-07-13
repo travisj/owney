@@ -9,11 +9,16 @@
 //! hint — clients recover the truth via `/changes` from their last state
 //! token, and internal consumers re-scan from the database.
 
+pub mod ws_events;
+
 use std::sync::Arc;
 
 use owney_core::{AccountId, DataType, EmailId, ModSeq};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+
+// Re-export WebSocket event types for convenience
+pub use ws_events::{WsEvent, WsEventBroadcaster, WsRegistry};
 
 /// Everything that can happen inside the server that someone else may care about.
 #[derive(Debug, Clone, Serialize, Deserialize)]
