@@ -19,6 +19,8 @@ pub struct QueueItem {
     pub domain: String,
     pub attempts: u32,
     pub next_attempt: i64,
+    /// Priority: 0=normal, 1=chat mode (faster backoff)
+    pub priority: u8,
 }
 
 /// Outcome of one delivery attempt, decided by ms-delivery.
@@ -45,6 +47,19 @@ impl Storage {
         mail_from: &str,
         recipient: &str,
     ) -> Result<QueueItem, StorageError> {
+        self.enqueue_with_priority(account_id, blob_id, mail_from, recipient, 0)
+            .await
+    }
+
+    /// Add one recipient with explicit priority (0=normal, 1=chat).
+    pub async fn enqueue_with_priority(
+        &self,
+        account_id: AccountId,
+        blob_id: BlobId,
+        mail_from: &str,
+        recipient: &str,
+        priority: u8,
+    ) -> Result<QueueItem, StorageError> {
         let domain = recipient
             .rsplit_once('@')
             .map(|(_, domain)| domain.to_lowercase())
@@ -58,6 +73,7 @@ impl Storage {
             domain,
             attempts: 0,
             next_attempt: unix_now(),
+            priority: priority.min(1), // clamp to 0 or 1
         };
         let insert = item.clone();
         self.db
@@ -65,8 +81,8 @@ impl Storage {
                 conn.execute(
                     "INSERT INTO queue
                        (id, account_id, blob_id, mail_from, recipient, domain,
-                        attempts, next_attempt, status, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'queued', ?8, ?8)",
+                        attempts, next_attempt, status, priority, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 'queued', ?8, ?9, ?9)",
                     params![
                         insert.id.to_string(),
                         insert.account_id.to_string(),
@@ -75,6 +91,7 @@ impl Storage {
                         insert.recipient,
                         insert.domain,
                         insert.next_attempt,
+                        insert.priority,
                         unix_now(),
                     ],
                 )?;
@@ -84,9 +101,9 @@ impl Storage {
         Ok(item)
     }
 
-    /// Atomically claim due items (status 'queued' → 'sending'), oldest
-    /// first. The claim is what makes concurrent workers — including a CLI
-    /// process next to the server — safe from double delivery.
+    /// Atomically claim due items (status 'queued' → 'sending'), chat items first
+    /// (priority=1), then oldest (next_attempt). The claim is what makes concurrent
+    /// workers — including a CLI process next to the server — safe from double delivery.
     pub async fn due_queue_items(&self, limit: usize) -> Result<Vec<QueueItem>, StorageError> {
         self.db
             .call(move |conn| {
@@ -95,11 +112,11 @@ impl Storage {
                      WHERE id IN (
                         SELECT id FROM queue
                         WHERE status = 'queued' AND next_attempt <= ?1
-                        ORDER BY next_attempt
+                        ORDER BY priority DESC, next_attempt
                         LIMIT ?2
                      )
                      RETURNING id, account_id, blob_id, mail_from, recipient, domain,
-                               attempts, next_attempt",
+                               attempts, next_attempt, priority",
                 )?;
                 let rows = stmt
                     .query_map(params![unix_now(), limit as i64], |row| {
@@ -112,12 +129,13 @@ impl Storage {
                             row.get::<_, String>(5)?,
                             row.get::<_, i64>(6)?,
                             row.get::<_, i64>(7)?,
+                            row.get::<_, i64>(8)?,
                         ))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 rows.into_iter()
                     .map(
-                        |(id, account, blob, mail_from, recipient, domain, attempts, next)| {
+                        |(id, account, blob, mail_from, recipient, domain, attempts, next, priority)| {
                             Ok(QueueItem {
                                 id: id.parse().map_err(|_| {
                                     StorageError::Corrupt(format!("bad queue id {id}"))
@@ -133,6 +151,7 @@ impl Storage {
                                 domain,
                                 attempts: attempts as u32,
                                 next_attempt: next,
+                                priority: (priority as u8).min(1),
                             })
                         },
                     )

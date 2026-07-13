@@ -948,7 +948,7 @@ async fn submission_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodE
             }
 
             let queued = submitter
-                .submit(account_id, mail_from, recipients, raw)
+                .submit_with_priority(account_id, mail_from, recipients, raw, row.chat_mode)
                 .await
                 .map_err(|err| err.to_string())?;
             Ok(json!({

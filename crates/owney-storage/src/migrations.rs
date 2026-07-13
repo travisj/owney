@@ -239,6 +239,9 @@ const MIGRATIONS: &[&str] = &[
     ) STRICT;
     CREATE INDEX chat_preferences_by_account ON chat_preferences (account_id);
     "#,
+    // 11 -> 12: Queue priority for chat mode delivery.
+    // queue.priority: 0=normal (1m/5m/30m/2h/4h backoff), 1=chat (30s/2m/10m/1h backoff)
+    "ALTER TABLE queue ADD COLUMN priority INTEGER DEFAULT 0;",
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

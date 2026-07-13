@@ -7,7 +7,7 @@ use owney_events::{DeliveryStatus, Event, EventBus};
 use owney_storage::{AttemptOutcome, QueueItem, Storage};
 use tokio::sync::Notify;
 
-use crate::{BACKOFF, DeliveryError, DeliveryParams, Relay, Router};
+use crate::{BACKOFF, CHAT_BACKOFF, DeliveryError, DeliveryParams, Relay, Router};
 
 const BATCH: usize = 16;
 
@@ -78,7 +78,8 @@ async fn process_item<R: Router>(
         Err(DeliveryError::Permanent(error)) => AttemptOutcome::Failed { error },
         Err(err) => {
             let attempts = item.attempts as usize;
-            match BACKOFF.get(attempts) {
+            let backoff_schedule = if item.priority == 1 { &CHAT_BACKOFF[..] } else { &BACKOFF[..] };
+            match backoff_schedule.get(attempts) {
                 Some(delay) => {
                     // ±10% jitter to avoid thundering-herd retries when a relay
                     // bounces for many senders simultaneously.
@@ -95,7 +96,7 @@ async fn process_item<R: Router>(
                         next_attempt: unix_now() + delay + jitter,
                     }
                 }
-                // Schedule exhausted (~48h of trying).
+                // Schedule exhausted (normal: ~48h, chat: ~8h of trying).
                 None => AttemptOutcome::Failed {
                     error: format!("retries exhausted: {err}"),
                 },
@@ -381,6 +382,7 @@ mod dsn_tests {
             domain: "remote.test".to_owned(),
             attempts: 4,
             next_attempt: 0,
+            priority: 0,
         }
     }
 
