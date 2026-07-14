@@ -1,14 +1,27 @@
+//! Passwordless authentication REST API (passkeys, recovery codes, cross-device
+//! approval, QR pairing).
+//!
+//! ⚠️ NOT PRODUCTION READY — DO NOT MOUNT. `auth_routes()` is intentionally not
+//! merged into the main router. Several handlers still use a literal
+//! `"placeholder"` account id, do not persist what they claim to, and issue
+//! session tokens that the main bearer-auth path (`authenticate` in lib.rs)
+//! does not recognise. Wiring these routes up as-is would create unauthenticated
+//! account-takeover paths (see docs/POSTMORTEM_2026-07-13.md, findings
+//! CR-03..CR-08). Before mounting: replace every placeholder identity with an
+//! authenticated account context, integrate session tokens with the storage
+//! token path, make recovery/approval transitions atomic, and add end-to-end
+//! HTTP tests for every flow.
+
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use owney_authn_v2::{
     self, AuthError, AuthResult, CredentialId, PasskeyAuthentication, PasskeyManager,
-    PasskeyRegistration, PasswordlessAuthConfig, PublicKeyCredential,
-    RegisterPublicKeyCredential,
+    PasskeyRegistration, PasswordlessAuthConfig, PublicKeyCredential, RegisterPublicKeyCredential,
 };
 use owney_core::Config;
 use owney_storage::Storage;
@@ -55,15 +68,15 @@ pub struct PasskeyRegistrationStartRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasskeyRegistrationStartResponse {
-    pub options: serde_json::Value,           // WebAuthn CreationChallengeResponse
-    pub session_id: String,                   // Temporary session ID for challenge storage
+    pub options: serde_json::Value, // WebAuthn CreationChallengeResponse
+    pub session_id: String,         // Temporary session ID for challenge storage
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasskeyRegistrationFinishRequest {
     pub session_id: String,
-    pub device_name: String,                  // "iPhone 15 Pro"
-    pub credential: serde_json::Value,        // PublicKeyCredential from browser
+    pub device_name: String,           // "iPhone 15 Pro"
+    pub credential: serde_json::Value, // PublicKeyCredential from browser
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,20 +92,20 @@ pub struct PasskeyAuthenticationStartRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasskeyAuthenticationStartResponse {
-    pub options: serde_json::Value,           // WebAuthn RequestChallengeResponse
-    pub session_id: String,                   // Temporary session ID for challenge storage
+    pub options: serde_json::Value, // WebAuthn RequestChallengeResponse
+    pub session_id: String,         // Temporary session ID for challenge storage
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasskeyAuthenticationFinishRequest {
     pub session_id: String,
-    pub credential: serde_json::Value,        // PublicKeyCredential from browser
+    pub credential: serde_json::Value, // PublicKeyCredential from browser
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasskeyAuthenticationFinishResponse {
     pub success: bool,
-    pub session_token: String,                // Bearer token for authenticated requests
+    pub session_token: String, // Bearer token for authenticated requests
     pub user_id: String,
 }
 
@@ -103,13 +116,13 @@ pub struct RecoveryCodeGenerateRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryCodeGenerateResponse {
-    pub codes: Vec<String>,                   // Plain codes (only shown once)
-    pub display_format: String,               // "XXXX-XXXX-XXXX"
+    pub codes: Vec<String>,     // Plain codes (only shown once)
+    pub display_format: String, // "XXXX-XXXX-XXXX"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryCodeUseRequest {
-    pub recovery_code: String,                // User enters code here
+    pub recovery_code: String, // User enters code here
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,22 +134,22 @@ pub struct RecoveryCodeUseResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequestCreateRequest {
-    pub request_type: String,                 // "web_login", "app_login", etc.
-    pub source_device: String,                // "San Francisco, CA (192.0.2.1)"
+    pub request_type: String,  // "web_login", "app_login", etc.
+    pub source_device: String, // "San Francisco, CA (192.0.2.1)"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequestCreateResponse {
     pub request_id: String,
     pub expires_in_seconds: u64,
-    pub message: String,                      // "Push notifications sent to enrolled devices"
+    pub message: String, // "Push notifications sent to enrolled devices"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequestStatusResponse {
-    pub status: String,                       // "pending", "approved", "denied", "expired"
+    pub status: String, // "pending", "approved", "denied", "expired"
     pub approved_by_device: Option<String>,
-    pub approved_at: Option<i64>,             // Unix timestamp
+    pub approved_at: Option<i64>, // Unix timestamp
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +165,7 @@ pub struct ApprovalRequestApproveResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QrCodePairingResponse {
-    pub qr_code: String,                      // SVG or Unicode string
+    pub qr_code: String, // SVG or Unicode string
     pub pairing_code: String,
     pub expires_in_seconds: u64,
 }
@@ -247,10 +260,19 @@ impl IntoResponse for ApiAuthError {
             ),
         };
 
+        // Log the full internal error server-side for diagnosis, but never
+        // serialize Debug output to the client — it leaks implementation
+        // details and the structure of authentication failures to attackers.
+        if status == StatusCode::INTERNAL_SERVER_ERROR {
+            tracing::error!(error = ?self.0, "auth internal error");
+        } else {
+            tracing::debug!(error = ?self.0, code, "auth error");
+        }
+
         let error = ErrorResponse {
             error: message.to_string(),
             code: code.to_string(),
-            details: Some(format!("{:?}", self.0)),
+            details: None,
         };
 
         (status, Json(error)).into_response()
@@ -302,7 +324,9 @@ pub async fn passkey_registration_start(
     let email = req.email.to_lowercase();
 
     // Generate registration challenge
-    let reg_opts = state.passkey_manager.start_registration(&email, &email, None)?;
+    let reg_opts = state
+        .passkey_manager
+        .start_registration(&email, &email, None)?;
 
     // Store the serialized registration state (challenge + verification data)
     let stored = StoredRegistrationState {
@@ -369,7 +393,10 @@ pub async fn passkey_registration_finish(
     };
 
     // Save to database
-    state.storage.save_passkey_credential(&storage_cred).await
+    state
+        .storage
+        .save_passkey_credential(&storage_cred)
+        .await
         .map_err(|e| AuthError::Database(format!("Failed to save credential: {}", e)))?;
 
     tracing::info!(account_id = %credential.account_id, device_name = %credential.device_name, "passkey registered");
@@ -388,12 +415,18 @@ pub async fn passkey_authentication_start(
     let email = req.email.to_lowercase();
 
     // Verify account exists
-    let _account = state.storage.account_by_email(&email).await
+    let _account = state
+        .storage
+        .account_by_email(&email)
+        .await
         .map_err(|_| AuthError::Unauthorized)?
         .ok_or(AuthError::CredentialNotFound)?;
 
     // Get user's registered passkeys
-    let stored_passkeys = state.storage.list_passkeys_for_account(email.clone()).await
+    let stored_passkeys = state
+        .storage
+        .list_passkeys_for_account(email.clone())
+        .await
         .map_err(|_| AuthError::CredentialNotFound)?;
 
     if stored_passkeys.is_empty() {
@@ -445,7 +478,10 @@ pub async fn passkey_authentication_finish(
 
     // Get credential from storage
     let cred_id: Vec<u8> = response.raw_id.as_ref().to_vec();
-    let stored_cred = state.storage.get_passkey_credential(&cred_id).await
+    let stored_cred = state
+        .storage
+        .get_passkey_credential(&cred_id)
+        .await
         .map_err(|_| AuthError::CredentialNotFound)?
         .ok_or(AuthError::CredentialNotFound)?;
 
@@ -456,11 +492,15 @@ pub async fn passkey_authentication_finish(
         .finish_authentication(&response, &auth_state, &mut auth_cred)?;
 
     // Update counter and last_used_at in storage
-    state.storage.update_passkey_counter(&cred_id, auth_cred.counter).await
+    state
+        .storage
+        .update_passkey_counter(&cred_id, auth_cred.counter)
+        .await
         .map_err(|e| AuthError::Database(format!("Failed to update credential: {}", e)))?;
 
     // Generate session token
-    let session_token = state.session_tokens
+    let session_token = state
+        .session_tokens
         .generate_token(stored_cred.account_id.clone())
         .await
         .map_err(AuthError::Config)?;
@@ -488,8 +528,8 @@ pub async fn recovery_code_generate(
     }
 
     // Generate recovery codes
+    use sha2::{Digest, Sha256};
     use uuid::Uuid;
-    use sha2::{Sha256, Digest};
 
     let mut codes = Vec::new();
     let mut display_codes = Vec::new();
@@ -531,7 +571,7 @@ pub async fn recovery_code_use(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<RecoveryCodeUseRequest>,
 ) -> Result<Json<RecoveryCodeUseResponse>, ApiAuthError> {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     // Normalize code (remove dashes, uppercase)
     let code = req.recovery_code.replace("-", "").to_uppercase();
@@ -542,7 +582,10 @@ pub async fn recovery_code_use(
     let code_hash = hex::encode(hasher.finalize());
 
     // Look up code in database
-    let recovery_code = state.storage.get_recovery_code_by_hash(&code_hash).await
+    let recovery_code = state
+        .storage
+        .get_recovery_code_by_hash(&code_hash)
+        .await
         .map_err(|_| AuthError::InvalidRecoveryCode)?
         .ok_or(AuthError::InvalidRecoveryCode)?;
 
@@ -551,11 +594,15 @@ pub async fn recovery_code_use(
     }
 
     // Mark code as used
-    state.storage.mark_recovery_code_used(&recovery_code.id).await
+    state
+        .storage
+        .mark_recovery_code_used(&recovery_code.id)
+        .await
         .map_err(|e| AuthError::WebAuthn(format!("Failed to mark code used: {}", e)))?;
 
     // Generate session token
-    let session_token = state.session_tokens
+    let session_token = state
+        .session_tokens
         .generate_token(recovery_code.account_id.clone())
         .await
         .map_err(|e| AuthError::Config(e))?;
@@ -573,8 +620,8 @@ pub async fn approval_request_create(
     State(state): State<Arc<AuthState>>,
     Json(req): Json<ApprovalRequestCreateRequest>,
 ) -> Result<Json<ApprovalRequestCreateResponse>, ApiAuthError> {
-    use uuid::Uuid;
     use rand::Rng;
+    use uuid::Uuid;
 
     // This would normally get account_id from auth context
     // For now it's a placeholder
@@ -585,7 +632,10 @@ pub async fn approval_request_create(
     //     .ok_or(AuthError::Unauthorized)?;
 
     // Get enrolled devices for the account
-    let devices = state.storage.list_devices_for_account(account_id.clone()).await
+    let devices = state
+        .storage
+        .list_devices_for_account(account_id.clone())
+        .await
         .map_err(|_| AuthError::Unauthorized)?;
 
     if devices.is_empty() {
@@ -618,7 +668,10 @@ pub async fn approval_request_create(
     };
 
     // Save request
-    state.storage.save_approval_request(&approval_req).await
+    state
+        .storage
+        .save_approval_request(&approval_req)
+        .await
         .map_err(|e| AuthError::WebAuthn(format!("Failed to create request: {}", e)))?;
 
     // Send push notifications to devices with push tokens
@@ -637,7 +690,10 @@ pub async fn approval_request_create(
     Ok(Json(ApprovalRequestCreateResponse {
         request_id,
         expires_in_seconds: 600, // 10 minutes
-        message: format!("Approval request sent to {} enrolled devices", devices.len()),
+        message: format!(
+            "Approval request sent to {} enrolled devices",
+            devices.len()
+        ),
     }))
 }
 
@@ -645,7 +701,10 @@ pub async fn approval_request_status(
     State(state): State<Arc<AuthState>>,
     Path(request_id): Path<String>,
 ) -> Result<Json<ApprovalRequestStatusResponse>, ApiAuthError> {
-    let request = state.storage.get_approval_request(&request_id).await
+    let request = state
+        .storage
+        .get_approval_request(&request_id)
+        .await
         .map_err(|_| AuthError::ApprovalRequestExpired)?
         .ok_or(AuthError::ApprovalRequestExpired)?;
 
@@ -673,7 +732,10 @@ pub async fn approval_request_approve(
     Json(req): Json<ApprovalRequestApproveRequest>,
 ) -> Result<Json<ApprovalRequestApproveResponse>, ApiAuthError> {
     // Get the approval request
-    let approval_req = state.storage.get_approval_request(&request_id).await
+    let approval_req = state
+        .storage
+        .get_approval_request(&request_id)
+        .await
         .map_err(|_| AuthError::ApprovalRequestExpired)?
         .ok_or(AuthError::ApprovalRequestExpired)?;
 
@@ -683,7 +745,10 @@ pub async fn approval_request_approve(
     }
 
     // Verify device is enrolled and belongs to same account
-    let device = state.storage.get_device_pairing(&req.device_id).await
+    let device = state
+        .storage
+        .get_device_pairing(&req.device_id)
+        .await
         .map_err(|_| AuthError::Unauthorized)?
         .ok_or(AuthError::Unauthorized)?;
 
@@ -696,15 +761,17 @@ pub async fn approval_request_approve(
     }
 
     // Mark as approved
-    state.storage.update_approval_request_status(
-        &request_id,
-        "approved",
-        Some(&req.device_id),
-    ).await
+    state
+        .storage
+        .update_approval_request_status(&request_id, "approved", Some(&req.device_id))
+        .await
         .map_err(|e| AuthError::WebAuthn(format!("Failed to approve: {}", e)))?;
 
     // Update device last_used_at
-    state.storage.update_device_last_used(&req.device_id).await
+    state
+        .storage
+        .update_device_last_used(&req.device_id)
+        .await
         .map_err(|e| AuthError::WebAuthn(format!("Failed to update device: {}", e)))?;
 
     tracing::info!(request_id = %request_id, device_id = %req.device_id, "approval request approved");
@@ -771,7 +838,7 @@ pub async fn qr_code_pairing_confirm(
         account_id,
         device_name: req.device_name,
         device_type: "unknown".to_string(), // Would be detected from device
-        public_key: vec![], // Would be from pairing handshake
+        public_key: vec![],                 // Would be from pairing handshake
         can_approve: true,
         push_token: None, // Would be provided by device
         paired_at: chrono::Utc::now(),
@@ -780,7 +847,10 @@ pub async fn qr_code_pairing_confirm(
     };
 
     // Save device
-    state.storage.save_device_pairing(&device).await
+    state
+        .storage
+        .save_device_pairing(&device)
+        .await
         .map_err(|e| AuthError::WebAuthn(format!("Failed to save device: {}", e)))?;
 
     tracing::info!(device_id = %device_id, "device paired via QR code");
@@ -827,14 +897,8 @@ pub fn auth_routes() -> Router<Arc<AuthState>> {
         )
         .route("/auth/recovery/generate", post(recovery_code_generate))
         .route("/auth/recovery/use", post(recovery_code_use))
-        .route(
-            "/auth/approval/create",
-            post(approval_request_create),
-        )
-        .route(
-            "/auth/approval/{request_id}",
-            get(approval_request_status),
-        )
+        .route("/auth/approval/create", post(approval_request_create))
+        .route("/auth/approval/{request_id}", get(approval_request_status))
         .route(
             "/auth/approval/{request_id}/approve",
             post(approval_request_approve),
@@ -873,4 +937,3 @@ mod tests {
         assert!(qr.contains("test-data"));
     }
 }
-

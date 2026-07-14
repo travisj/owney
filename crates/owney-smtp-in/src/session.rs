@@ -384,9 +384,11 @@ impl<H: MailHandler> Session<H> {
         }
 
         let mut raw = self.received_header().into_bytes();
+        // `data` already ends with the message's final CRLF (DataReceiver only
+        // removes the terminating `.CRLF`, not the CRLF of the last body line).
+        // Appending another here produced a spurious trailing blank line on
+        // every delivered message.
         raw.extend_from_slice(&data);
-        // DataReceiver strips the CRLF that preceded the terminating dot.
-        raw.extend_from_slice(b"\r\n");
 
         let mail = InboundMail {
             remote: self.remote,
@@ -419,7 +421,13 @@ impl<H: MailHandler> Session<H> {
         } else {
             self.helo
                 .chars()
-                .map(|c| if c == '\r' || c == '\n' || c.is_ascii_control() { ' ' } else { c })
+                .map(|c| {
+                    if c == '\r' || c == '\n' || c.is_ascii_control() {
+                        ' '
+                    } else {
+                        c
+                    }
+                })
                 .collect::<String>()
         };
         // `self.remote` is `IpAddr`; its `Display` impl only emits digits,

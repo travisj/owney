@@ -102,11 +102,11 @@
 //! - `{types}`, `{closeafter}`, `{ping}`: EventSource parameters
 //!
 //! Example: If `downloadUrl` is
-//! ```
+//! ```text
 //! https://mail.example.com/jmap/download/{accountId}/{blobId}/{name}
 //! ```
 //! A client needing to download blob `b123` from account `a1` would fetch:
-//! ```
+//! ```text
 //! https://mail.example.com/jmap/download/a1/b123/document.pdf
 //! ```
 //!

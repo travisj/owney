@@ -58,8 +58,15 @@ impl std::fmt::Debug for ApiState {
 }
 
 pub fn router(state: Arc<ApiState>) -> Router {
-    let static_dir = std::env::var("UI_STATIC_DIR")
-        .unwrap_or_else(|_| "./static".to_string());
+    let static_dir = std::env::var("UI_STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
+    if !std::path::Path::new(&static_dir).is_dir() {
+        tracing::warn!(
+            static_dir,
+            "UI static directory does not exist; the web UI will 404. Set \
+             UI_STATIC_DIR to the built assets (the UI build writes to \
+             crates/owney-api/static)."
+        );
+    }
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -133,7 +140,9 @@ async fn wkd_key(
         let Some((local, _domain)) = account.email.rsplit_once('@') else {
             continue;
         };
-        let matches = owney_pgp::wkd::hu(local).map(|h| h == hash).unwrap_or(false);
+        let matches = owney_pgp::wkd::hu(local)
+            .map(|h| h == hash)
+            .unwrap_or(false);
         if !matches {
             continue;
         }

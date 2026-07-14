@@ -28,7 +28,7 @@ impl MailHandler for MockHandler {
 
     async fn deliver(&self, mail: InboundMail) -> Result<(), DeliverError> {
         if self.fail_delivery {
-            return Err(DeliverError("mock failure".into()));
+            return Err(DeliverError::Temporary("mock failure".into()));
         }
         self.delivered.lock().expect("lock").push(mail);
         Ok(())

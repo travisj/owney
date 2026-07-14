@@ -225,6 +225,34 @@ Calendar Federation - Multi-user sharing with cross-server support
    - Clear commit messages
    - Reference relevant files/methods
 
+### Definition of Done (READ THIS)
+
+On 2026-07-13 three features were built, documented as "complete," compiled, and
+passed 182 unit tests — yet a review found 52 issues including unauthenticated
+endpoints, an auth API that was never mounted, and recovery codes that could
+never verify. See `docs/POSTMORTEM_2026-07-13.md` for the full analysis. To not
+repeat it, a feature is **not done** until ALL of these hold:
+
+1. **Wired** — reachable in the real binary (route mounted, worker spawned), not
+   just defined. Unmounted code is not a feature.
+2. **Run** — executed end-to-end against a running server/db (use `/verify` or
+   `/run`), not only unit-tested. State what you actually observed.
+3. **Boundary-tested** — at least one negative test per auth/authorization
+   boundary ("caller without rights is rejected"), and one test that drives the
+   real public entry points in caller order.
+4. **No silent stubs** — zero `"placeholder"` identities, zero commented-out
+   persistence, zero `unwrap_or_else(|_| ...::new())` on untrusted input.
+   Incomplete paths must fail loudly (`todo!()`/`Err`) or be flag-gated OFF,
+   never return a fake `Ok`.
+5. **Gates green for real** — run (don't assume) `cargo check && cargo test &&
+   cargo clippy --all-targets && cargo fmt --check`.
+6. **Honest docs** — a completion claim must name the test/command that proves
+   it. Do not write "✓ complete" summary docs; they inflate confidence and hide
+   gaps. Report "what works / what doesn't yet" instead.
+
+Verify unfamiliar crate APIs against docs.rs/`cargo doc` before use — do not code
+from memory. Security endpoints default OFF until authenticated and tested.
+
 ### Code Style
 
 **Rust Standards**:

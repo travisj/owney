@@ -9,19 +9,46 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::{extract::Path, Router};
-use serde_json::{json, Value};
+use axum::{Router, extract::Path};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::federation::{AccountInfo, CalendarInfo, FederationInvitation, ServerMetadata};
 use crate::ApiState;
+use crate::federation::{AccountInfo, CalendarInfo, FederationInvitation, ServerMetadata};
 
-/// Mount well-known endpoints on the router
+/// Mount well-known endpoints on the router.
+///
+/// SECURITY: these federation endpoints are currently UNAUTHENTICATED and the
+/// federation feature is not wired end-to-end (see docs/POSTMORTEM_2026-07-13.md).
+/// `account_lookup` leaks account/calendar metadata, `receive_invitation`
+/// trusts caller-supplied inviter identity, and `calendar_sync` will serve
+/// calendar events to anyone who knows a federation id. They are therefore
+/// DISABLED by default and only mounted when `OWNEY_FEDERATION_ENABLED=true`
+/// is explicitly set, so a default deployment cannot expose them. Do not flip
+/// this default until per-federation authentication (CR-01, CR-02, CR-11,
+/// HI-08) is implemented and covered by tests.
 pub fn routes() -> Router<Arc<ApiState>> {
+    let enabled = std::env::var("OWNEY_FEDERATION_ENABLED")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if !enabled {
+        return Router::new();
+    }
+
+    tracing::warn!(
+        "OWNEY_FEDERATION_ENABLED is set — mounting UNAUTHENTICATED federation \
+         well-known endpoints. These expose calendar metadata and events without \
+         any peer authentication. Do not use in production."
+    );
+
     Router::new()
         .route("/.well-known/owney/server", get(server_metadata))
         .route("/.well-known/owney/account/{email}", get(account_lookup))
-        .route("/.well-known/owney/calendar/invite", post(receive_invitation))
+        .route(
+            "/.well-known/owney/calendar/invite",
+            post(receive_invitation),
+        )
         .route(
             "/.well-known/owney/calendar/sync/{federation_id}",
             get(calendar_sync),
@@ -78,9 +105,11 @@ async fn account_lookup(
 
             (StatusCode::OK, axum::Json(info)).into_response()
         }
-        Ok(None) | Err(_) => {
-            (StatusCode::NOT_FOUND, axum::Json(json!({"error": "account not found"}))).into_response()
-        }
+        Ok(None) | Err(_) => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "account not found"})),
+        )
+            .into_response(),
     }
 }
 
@@ -99,8 +128,14 @@ async fn receive_invitation(
             // Create a pending invitation for the target account
             match storage
                 .create_federation_invitation(
-                    invitation.calendar_id.parse().unwrap_or_else(|_| owney_core::CalendarId::new()),
-                    invitation.inviter_account_id.parse().unwrap_or_else(|_| owney_core::AccountId::new()),
+                    invitation
+                        .calendar_id
+                        .parse()
+                        .unwrap_or_else(|_| owney_core::CalendarId::new()),
+                    invitation
+                        .inviter_account_id
+                        .parse()
+                        .unwrap_or_else(|_| owney_core::AccountId::new()),
                     format!(
                         "{}|{}",
                         invitation.inviter_account_id, invitation.inviter_server_url
@@ -113,39 +148,31 @@ async fn receive_invitation(
                 )
                 .await
             {
-                Ok(inv) => {
-                    (
-                        StatusCode::OK,
-                        axum::Json(json!({
-                            "invitation_id": inv.id,
-                            "status": "pending"
-                        })),
-                    )
-                        .into_response()
-                }
-                Err(_) => {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        axum::Json(json!({"error": "failed to create invitation"})),
-                    )
-                        .into_response()
-                }
+                Ok(inv) => (
+                    StatusCode::OK,
+                    axum::Json(json!({
+                        "invitation_id": inv.id,
+                        "status": "pending"
+                    })),
+                )
+                    .into_response(),
+                Err(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({"error": "failed to create invitation"})),
+                )
+                    .into_response(),
             }
         }
-        Ok(None) => {
-            (
-                StatusCode::NOT_FOUND,
-                axum::Json(json!({"error": "account not found"})),
-            )
-                .into_response()
-        }
-        Err(_) => {
-            (
-                StatusCode::NOT_FOUND,
-                axum::Json(json!({"error": "account not found"})),
-            )
-                .into_response()
-        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "account not found"})),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"error": "account not found"})),
+        )
+            .into_response(),
     }
 }
 
@@ -159,9 +186,7 @@ async fn calendar_sync(
 ) -> impl IntoResponse {
     let storage = &state.storage;
     let sync_token = params.get("token").cloned();
-    let since_timestamp = params
-        .get("since")
-        .and_then(|s| s.parse::<i64>().ok());
+    let since_timestamp = params.get("since").and_then(|s| s.parse::<i64>().ok());
 
     // Get federation record to verify it exists and has a calendar
     let federation = match storage.get_federation(&federation_id).await {
@@ -198,7 +223,10 @@ async fn calendar_sync(
     };
 
     // Fetch events modified since sync_since
-    let events = match storage.list_calendar_events_since(federation.calendar_id, sync_since).await {
+    let events = match storage
+        .list_calendar_events_since(federation.calendar_id, sync_since)
+        .await
+    {
         Ok(events) => events,
         Err(_) => {
             return (
