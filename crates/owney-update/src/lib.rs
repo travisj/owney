@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use owney_core::Config;
 use owney_storage::Storage;
 use tracing::{error, info};
@@ -30,22 +30,17 @@ pub struct UpdateReport {
 ///
 /// This ensures the new binary can successfully apply schema changes
 /// without modifying the current database. Returns true if successful.
-pub async fn test_migrations(
-    current_db: &Path,
-    new_binary: &Path,
-) -> anyhow::Result<UpdateReport> {
+pub async fn test_migrations(current_db: &Path, new_binary: &Path) -> anyhow::Result<UpdateReport> {
     // Create temp copy of database
     let temp_dir = tempfile::tempdir().context("creating temp dir for migration test")?;
     let test_db = temp_dir.path().join("mail.db");
-    
-    fs::copy(current_db, &test_db)
-        .context("copying database for migration test")?;
+
+    fs::copy(current_db, &test_db).context("copying database for migration test")?;
 
     info!("testing migrations on backup database");
 
     // Extract version from new binary by running it
-    let version = extract_version(new_binary)
-        .unwrap_or_else(|_| "unknown".to_string());
+    let version = extract_version(new_binary).unwrap_or_else(|_| "unknown".to_string());
 
     // Try to open the DB with the new binary's Storage layer
     // This will trigger any pending migrations
@@ -94,11 +89,10 @@ fn extract_version(binary_path: &Path) -> anyhow::Result<String> {
 
 /// Verify binary hash against expected value.
 pub async fn verify_binary(binary_path: &Path, expected_hash: &str) -> anyhow::Result<bool> {
-    let data = fs::read(binary_path)
-        .context("reading binary for verification")?;
+    let data = fs::read(binary_path).context("reading binary for verification")?;
     let hash = blake3::hash(&data);
     let hash_str = hash.to_hex().to_string();
-    
+
     Ok(hash_str == expected_hash)
 }
 
@@ -107,28 +101,26 @@ pub async fn verify_binary(binary_path: &Path, expected_hash: &str) -> anyhow::R
 /// On success, the current binary is moved to `{name}.old` and the new
 /// binary is moved into place. If anything fails, the current binary is
 /// left untouched.
-pub async fn swap_binary(
-    old_binary: &Path,
-    new_binary: &Path,
-) -> anyhow::Result<()> {
+pub async fn swap_binary(old_binary: &Path, new_binary: &Path) -> anyhow::Result<()> {
     if !old_binary.exists() {
-        return Err(anyhow!("current binary not found: {}", old_binary.display()));
+        return Err(anyhow!(
+            "current binary not found: {}",
+            old_binary.display()
+        ));
     }
     if !new_binary.exists() {
         return Err(anyhow!("new binary not found: {}", new_binary.display()));
     }
 
     let backup = old_binary.with_extension("old");
-    
+
     // Rename current binary out of the way
-    fs::rename(old_binary, &backup)
-        .context("renaming current binary to .old")?;
+    fs::rename(old_binary, &backup).context("renaming current binary to .old")?;
 
     // Move new binary into place
     if let Err(e) = fs::rename(new_binary, old_binary) {
         // Restore backup on failure
-        fs::rename(&backup, old_binary)
-            .context("restoring backup after failed swap")?;
+        fs::rename(&backup, old_binary).context("restoring backup after failed swap")?;
         return Err(e).context("moving new binary into place");
     }
 
@@ -188,7 +180,9 @@ mod tests {
         let hash = blake3::hash(b"test content").to_hex().to_string();
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let matches = rt.block_on(verify_binary(&file_path, &hash)).expect("verify");
+        let matches = rt
+            .block_on(verify_binary(&file_path, &hash))
+            .expect("verify");
         assert!(matches);
     }
 
@@ -199,7 +193,9 @@ mod tests {
         fs::write(&file_path, b"test content").expect("write");
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let matches = rt.block_on(verify_binary(&file_path, "wrong_hash")).expect("verify");
+        let matches = rt
+            .block_on(verify_binary(&file_path, "wrong_hash"))
+            .expect("verify");
         assert!(!matches);
     }
 
@@ -208,7 +204,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let old_bin = temp_dir.path().join("binary");
         let new_bin = temp_dir.path().join("binary.new");
-        
+
         fs::write(&old_bin, b"old").expect("write old");
         fs::write(&new_bin, b"new").expect("write new");
 

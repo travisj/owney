@@ -111,9 +111,11 @@ impl Storage {
             // Get all accounts
             let accounts = db
                 .call(|conn| {
-                    let mut stmt = conn.prepare("SELECT id FROM accounts WHERE disabled_at IS NULL")?;
-                    let ids: Vec<String> =
-                        stmt.query_map([], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?;
+                    let mut stmt =
+                        conn.prepare("SELECT id FROM accounts WHERE disabled_at IS NULL")?;
+                    let ids: Vec<String> = stmt
+                        .query_map([], |r| r.get(0))?
+                        .collect::<Result<Vec<_>, _>>()?;
                     Ok(ids)
                 })
                 .await;
@@ -121,7 +123,8 @@ impl Storage {
             if let Ok(account_ids) = accounts {
                 for account_id_str in account_ids {
                     if let Ok(account_id) = account_id_str.parse::<AccountId>() {
-                        let search_index = SearchIndex::new(data_dir.join("search").join(account_id.to_string()));
+                        let search_index =
+                            SearchIndex::new(data_dir.join("search").join(account_id.to_string()));
 
                         // Get unindexed emails for this account
                         if let Ok(Some(unindexed)) = db
@@ -263,7 +266,10 @@ impl Storage {
     }
 
     /// Look up an account by email including disabled ones (for admin enable/disable operations).
-    pub async fn account_by_email_any_state(&self, email: &str) -> Result<Option<Account>, StorageError> {
+    pub async fn account_by_email_any_state(
+        &self,
+        email: &str,
+    ) -> Result<Option<Account>, StorageError> {
         let email = email.trim().to_lowercase();
         self.db
             .call(move |conn| {
@@ -360,10 +366,7 @@ impl Storage {
                         [id.to_string()],
                     )?;
                 }
-                tx.execute(
-                    "DELETE FROM accounts WHERE id = ?1",
-                    [id.to_string()],
-                )?;
+                tx.execute("DELETE FROM accounts WHERE id = ?1", [id.to_string()])?;
                 tx.commit()?;
 
                 // Delete blobs from filesystem
@@ -431,38 +434,40 @@ impl Storage {
 
     /// Get queue statistics: (total pending, failed).
     pub async fn queue_stats(&self) -> Result<(u32, u32), StorageError> {
-        self.db.call(|conn| {
-            let total: u32 = conn.query_row(
-                "SELECT COUNT(*) FROM queue WHERE status IN ('queued', 'failed')",
-                [],
-                |row| row.get(0),
-            )?;
-            let failed: u32 = conn.query_row(
-                "SELECT COUNT(*) FROM queue WHERE status = 'failed'",
-                [],
-                |row| row.get(0),
-            )?;
-            Ok((total, failed))
-        }).await
+        self.db
+            .call(|conn| {
+                let total: u32 = conn.query_row(
+                    "SELECT COUNT(*) FROM queue WHERE status IN ('queued', 'failed')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let failed: u32 = conn.query_row(
+                    "SELECT COUNT(*) FROM queue WHERE status = 'failed'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((total, failed))
+            })
+            .await
     }
 
     /// Check database integrity using PRAGMA integrity_check.
     pub async fn check_integrity(&self) -> Result<bool, StorageError> {
-        self.db.call(|conn| {
-            let mut stmt = conn.prepare("PRAGMA integrity_check")?;
-            let rows = stmt.query_map([], |row| {
-                row.get::<_, String>(0)
-            })?;
+        self.db
+            .call(|conn| {
+                let mut stmt = conn.prepare("PRAGMA integrity_check")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
-            for row_result in rows {
-                let message = row_result?;
-                if message != "ok" {
-                    tracing::warn!("database integrity issue: {}", message);
-                    return Ok(false);
+                for row_result in rows {
+                    let message = row_result?;
+                    if message != "ok" {
+                        tracing::warn!("database integrity issue: {}", message);
+                        return Ok(false);
+                    }
                 }
-            }
-            Ok(true)
-        }).await
+                Ok(true)
+            })
+            .await
     }
 }
 
@@ -623,18 +628,29 @@ mod tests {
             .await
             .expect("create");
 
-        let before = storage.state(account.id, DataType::Email).await.expect("state");
+        let before = storage
+            .state(account.id, DataType::Email)
+            .await
+            .expect("state");
         assert_eq!(before, ModSeq(0), "starts at 0");
 
         // Ingest targeting a mailbox role that doesn't exist on this account.
         // The storage layer rejects with `Corrupt`, and any modseq bump inside
         // the same transaction must roll back (SQLite's atomic guarantee).
         let result = storage
-            .ingest_email(account.id, b"From: a@x\r\n\r\nhello\r\n".to_vec(), "nonexistent_role", None)
+            .ingest_email(
+                account.id,
+                b"From: a@x\r\n\r\nhello\r\n".to_vec(),
+                "nonexistent_role",
+                None,
+            )
             .await;
         assert!(result.is_err(), "ingest to missing role must fail");
 
-        let after = storage.state(account.id, DataType::Email).await.expect("state");
+        let after = storage
+            .state(account.id, DataType::Email)
+            .await
+            .expect("state");
         assert_eq!(
             after, before,
             "rolled-back ingest must leave modseq untouched (got {before:?} → {after:?})"

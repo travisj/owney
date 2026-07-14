@@ -198,11 +198,7 @@ impl crate::Storage {
                     "UPDATE passkey_credentials
                      SET counter = ?1, last_used_at = ?2
                      WHERE id = ?3",
-                    rusqlite::params![
-                        new_counter,
-                        Utc::now().timestamp(),
-                        id.as_slice()
-                    ],
+                    rusqlite::params![new_counter, Utc::now().timestamp(), id.as_slice()],
                 )
                 .map_err(|e| StorageError::Database(e.to_string()))?;
                 Ok(())
@@ -384,7 +380,10 @@ impl crate::Storage {
     }
 
     /// Get a device pairing by ID.
-    pub async fn get_device_pairing(&self, device_id: &str) -> Result<Option<DevicePairing>, StorageError> {
+    pub async fn get_device_pairing(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<DevicePairing>, StorageError> {
         let id = device_id.to_string();
         self.db
             .call(move |conn| {
@@ -629,12 +628,7 @@ impl crate::Storage {
                     "UPDATE approval_requests
                      SET status = ?1, approved_by_device = ?2, approved_at = ?3
                      WHERE id = ?4",
-                    rusqlite::params![
-                        st,
-                        device_id,
-                        Utc::now().timestamp(),
-                        req_id
-                    ],
+                    rusqlite::params![st, device_id, Utc::now().timestamp(), req_id],
                 )
                 .map_err(|e| StorageError::Database(e.to_string()))?;
                 Ok(())
@@ -858,10 +852,7 @@ mod tests {
         };
 
         // Save it
-        storage
-            .save_approval_request(&request)
-            .await
-            .expect("save");
+        storage.save_approval_request(&request).await.expect("save");
 
         // Retrieve it
         let retrieved = storage

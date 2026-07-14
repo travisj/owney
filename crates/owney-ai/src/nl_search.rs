@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::provider::{AiProvider, StructuredRequest};
 use crate::AiError;
+use crate::provider::{AiProvider, StructuredRequest};
 
 /// The structured output from NL→JMAP translation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -64,10 +64,7 @@ pub async fn translate_to_filter(
 
     let request = StructuredRequest {
         system: system_prompt.to_string(),
-        user: format!(
-            "Translate this email search to JMAP filter: \"{}\"",
-            query
-        ),
+        user: format!("Translate this email search to JMAP filter: \"{}\"", query),
         schema: json!({
             "type": "object",
             "properties": {

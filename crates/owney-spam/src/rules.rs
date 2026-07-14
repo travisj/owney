@@ -28,7 +28,12 @@ pub fn check_message(raw: &[u8]) -> RulesVerdict {
     // Extract subject header
     if let Some(subj) = extract_header(&msg_str, "Subject") {
         // ALL CAPS subject (with some minimum length to avoid short words like "RE")
-        if subj.len() > 10 && subj.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase()) {
+        if subj.len() > 10
+            && subj
+                .chars()
+                .filter(|c| c.is_alphabetic())
+                .all(|c| c.is_uppercase())
+        {
             score += 0.15;
             matched_rules.push("ALL_CAPS_SUBJECT".to_string());
         }
@@ -44,7 +49,10 @@ pub fn check_message(raw: &[u8]) -> RulesVerdict {
     // Check for executable attachment extensions in Content-Disposition
     let executable_exts = [".exe", ".bat", ".scr", ".vbs", ".js", ".zip"];
     for ext in executable_exts {
-        if msg_str.to_lowercase().contains(&format!("filename=\"{}", &ext[1..])) {
+        if msg_str
+            .to_lowercase()
+            .contains(&format!("filename=\"{}", &ext[1..]))
+        {
             score += 0.20;
             matched_rules.push(format!("EXECUTABLE_ATTACHMENT{}", ext));
             break; // Only count once
@@ -52,7 +60,8 @@ pub fn check_message(raw: &[u8]) -> RulesVerdict {
     }
 
     // Suspicious "Received" chain (very short chain suggests spoofing)
-    let received_count = msg_str.matches("\nReceived:").count() + msg_str.matches("\r\nReceived:").count();
+    let received_count =
+        msg_str.matches("\nReceived:").count() + msg_str.matches("\r\nReceived:").count();
     if received_count == 0 {
         score += 0.10;
         matched_rules.push("NO_RECEIVED_HEADERS".to_string());
@@ -82,7 +91,11 @@ fn extract_header(msg: &str, header_name: &str) -> Option<String> {
         .or_else(|| msg.find(&needle_lf).map(|i| i + needle_lf.len()))?;
 
     // Skip leading whitespace
-    let start = msg[start..].chars().position(|c| !c.is_whitespace()).unwrap_or(0) + start;
+    let start = msg[start..]
+        .chars()
+        .position(|c| !c.is_whitespace())
+        .unwrap_or(0)
+        + start;
 
     // Find end of header (next line that doesn't start with space/tab)
     let end = msg[start..]
@@ -122,6 +135,11 @@ mod tests {
     fn detects_all_caps_subject() {
         let msg = b"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\nSubject: THIS IS SPAM!!!\r\n\r\nBody";
         let verdict = check_message(msg);
-        assert!(verdict.matched_rules.iter().any(|r| r == "ALL_CAPS_SUBJECT"));
+        assert!(
+            verdict
+                .matched_rules
+                .iter()
+                .any(|r| r == "ALL_CAPS_SUBJECT")
+        );
     }
 }

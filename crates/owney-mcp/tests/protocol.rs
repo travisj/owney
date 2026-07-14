@@ -74,7 +74,10 @@ async fn initialize_and_list_tools() {
     )
     .await
     .expect("init");
-    assert_eq!(init["result"]["protocolVersion"], owney_mcp::PROTOCOL_VERSION);
+    assert_eq!(
+        init["result"]["protocolVersion"],
+        owney_mcp::PROTOCOL_VERSION
+    );
     assert_eq!(init["result"]["serverInfo"]["name"], "mailserver");
 
     let list = handle(

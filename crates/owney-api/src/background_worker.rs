@@ -2,10 +2,10 @@
 //!
 //! Runs periodically to poll remote servers and sync calendar changes.
 
+use crate::calendar_sync::CalendarSyncCoordinator;
+use owney_storage::Storage;
 use std::sync::Arc;
 use std::time::Duration;
-use owney_storage::Storage;
-use crate::calendar_sync::CalendarSyncCoordinator;
 
 /// Configuration for background sync worker
 #[derive(Debug, Clone)]
@@ -19,8 +19,8 @@ pub struct SyncWorkerConfig {
 impl Default for SyncWorkerConfig {
     fn default() -> Self {
         Self {
-            interval_secs: 300,      // 5 minutes
-            max_backoff_secs: 3600,  // 1 hour
+            interval_secs: 300,     // 5 minutes
+            max_backoff_secs: 3600, // 1 hour
         }
     }
 }
@@ -75,10 +75,7 @@ impl SyncWorker {
     /// Run sync once (for testing or manual triggers)
     pub async fn sync_once(&self) -> Result<(), String> {
         let coordinator = CalendarSyncCoordinator::new(self.storage.clone());
-        coordinator
-            .sync_all()
-            .await
-            .map_err(|e| e.to_string())?;
+        coordinator.sync_all().await.map_err(|e| e.to_string())?;
         Ok(())
     }
 }

@@ -69,7 +69,10 @@ impl ImapSession {
 
     async fn handle_login(&mut self, parts: &[&str]) -> String {
         if parts.len() < 4 {
-            return format!("{} BAD LOGIN requires username and password\r\n", self.last_tag);
+            return format!(
+                "{} BAD LOGIN requires username and password\r\n",
+                self.last_tag
+            );
         }
 
         let username = parts[2];
@@ -83,20 +86,32 @@ impl ImapSession {
                     self.account = Some((account.id, account.email.clone()));
                     format!("{} OK LOGIN completed\r\n", self.last_tag)
                 } else {
-                    format!("{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", self.last_tag)
+                    format!(
+                        "{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n",
+                        self.last_tag
+                    )
                 }
             }
             Ok(None) => {
-                format!("{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n", self.last_tag)
+                format!(
+                    "{} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n",
+                    self.last_tag
+                )
             }
             Err(_) => {
-                format!("{} NO [UNAVAILABLE] Temporary authentication failure\r\n", self.last_tag)
+                format!(
+                    "{} NO [UNAVAILABLE] Temporary authentication failure\r\n",
+                    self.last_tag
+                )
             }
         }
     }
 
     fn handle_logout(&self) -> String {
-        format!("* BYE Owney IMAP4rev2 goodbye\r\n{} OK LOGOUT completed\r\n", self.last_tag)
+        format!(
+            "* BYE Owney IMAP4rev2 goodbye\r\n{} OK LOGOUT completed\r\n",
+            self.last_tag
+        )
     }
 
     fn handle_capability(&self) -> String {
@@ -124,7 +139,10 @@ impl ImapSession {
 
     fn handle_list(&self) -> String {
         // TODO: List mailboxes from storage
-        format!("* LIST (\\Noselect) \"/\" \"\"\r\n{} OK LIST completed\r\n", self.last_tag)
+        format!(
+            "* LIST (\\Noselect) \"/\" \"\"\r\n{} OK LIST completed\r\n",
+            self.last_tag
+        )
     }
 
     async fn handle_search(&mut self) -> String {
@@ -141,7 +159,10 @@ impl ImapSession {
             return format!("{} NO Please login first\r\n", self.last_tag);
         }
         if parts.len() < 3 {
-            return format!("{} BAD FETCH requires sequence-set and item-names\r\n", self.last_tag);
+            return format!(
+                "{} BAD FETCH requires sequence-set and item-names\r\n",
+                self.last_tag
+            );
         }
 
         // TODO: Fetch emails from storage and format as IMAP

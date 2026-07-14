@@ -3,8 +3,8 @@ use crate::{AuthResult, CredentialId, PasswordlessAuthConfig};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use webauthn_rs::prelude::*;
 use webauthn_rs::WebauthnBuilder;
+use webauthn_rs::prelude::*;
 
 /// A registered passkey credential.
 ///

@@ -70,7 +70,9 @@ async fn start_receiver() -> Receiver {
         storage: storage.clone(),
         account_id: account.id,
     });
-    tokio::spawn(owney_smtp_in::server::run_listener(listener, params, handler));
+    tokio::spawn(owney_smtp_in::server::run_listener(
+        listener, params, handler,
+    ));
 
     Receiver {
         storage,
@@ -291,11 +293,23 @@ async fn chat_mode_flag_stored_and_retrieved() {
 
     assert_eq!(rows.len(), 2);
 
-    let chat_row = rows.iter().find(|r| r.id == chat_ingested.id.to_string()).expect("find chat email");
-    assert_eq!(chat_row.chat_mode, true, "chat-mode email should have chat_mode=true");
+    let chat_row = rows
+        .iter()
+        .find(|r| r.id == chat_ingested.id.to_string())
+        .expect("find chat email");
+    assert_eq!(
+        chat_row.chat_mode, true,
+        "chat-mode email should have chat_mode=true"
+    );
 
-    let normal_row = rows.iter().find(|r| r.id == normal_ingested.id.to_string()).expect("find normal email");
-    assert_eq!(normal_row.chat_mode, false, "normal email should have chat_mode=false");
+    let normal_row = rows
+        .iter()
+        .find(|r| r.id == normal_ingested.id.to_string())
+        .expect("find normal email");
+    assert_eq!(
+        normal_row.chat_mode, false,
+        "normal email should have chat_mode=false"
+    );
 }
 
 #[tokio::test]
@@ -309,7 +323,11 @@ async fn chat_preference_storage_operations() {
 
     // Set auto_chat for bob
     storage
-        .set_chat_preference(account.id, "bob@example.com", owney_storage::ChatMode::AutoChat)
+        .set_chat_preference(
+            account.id,
+            "bob@example.com",
+            owney_storage::ChatMode::AutoChat,
+        )
         .await
         .expect("set");
 
@@ -322,7 +340,11 @@ async fn chat_preference_storage_operations() {
 
     // Set never_chat for spam
     storage
-        .set_chat_preference(account.id, "spam@bot.com", owney_storage::ChatMode::NeverChat)
+        .set_chat_preference(
+            account.id,
+            "spam@bot.com",
+            owney_storage::ChatMode::NeverChat,
+        )
         .await
         .expect("set");
 

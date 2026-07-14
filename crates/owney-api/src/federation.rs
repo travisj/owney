@@ -79,7 +79,7 @@ impl ServerDiscovery {
                         .await
                         .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()));
                 }
-                Ok(_) => continue, // Try next candidate
+                Ok(_) => continue,  // Try next candidate
                 Err(_) => continue, // Try next candidate
             }
         }
@@ -134,15 +134,15 @@ impl ServerDiscovery {
 
         match resp.status() {
             reqwest::StatusCode::OK => {
-                let body: HashMap<String, String> = resp.json().await
+                let body: HashMap<String, String> = resp
+                    .json()
+                    .await
                     .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()))?;
                 body.get("invitation_id")
                     .cloned()
                     .ok_or_else(|| DiscoveryError::InvalidMetadata("missing invitation_id".into()))
             }
-            _ => Err(DiscoveryError::InvitationFailed(
-                resp.status().to_string(),
-            )),
+            _ => Err(DiscoveryError::InvitationFailed(resp.status().to_string())),
         }
     }
 }

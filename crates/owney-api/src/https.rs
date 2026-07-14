@@ -20,8 +20,8 @@ pub fn load_tls_acceptor(cert_path: &Path, key_path: &Path) -> anyhow::Result<Tl
         cert_path.display()
     );
 
-    let key_file = std::fs::File::open(key_path)
-        .with_context(|| format!("opening {}", key_path.display()))?;
+    let key_file =
+        std::fs::File::open(key_path).with_context(|| format!("opening {}", key_path.display()))?;
     let mut reader = std::io::BufReader::new(key_file);
     let key = rustls_pemfile::private_key(&mut reader)
         .context("parsing private key")?

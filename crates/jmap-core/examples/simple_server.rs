@@ -14,8 +14,8 @@
 //!     -H 'Content-Type: application/json' \
 //!     -d '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[["Ping/ping",{},"c1"]]}'
 
-use jmap_core::{Dispatcher, Limits, CORE_CAPABILITY};
-use serde_json::{json, Value};
+use jmap_core::{CORE_CAPABILITY, Dispatcher, Limits};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,8 +33,7 @@ struct ServerContext {
 #[tokio::main]
 async fn main() {
     // Build the dispatcher with some reasonable limits.
-    let mut dispatcher: Dispatcher<ServerContext> =
-        Dispatcher::new("session-1");
+    let mut dispatcher: Dispatcher<ServerContext> = Dispatcher::new("session-1");
 
     dispatcher = dispatcher.with_limits(Limits {
         max_calls_in_request: 16,
@@ -171,17 +170,20 @@ async fn handle_connection(
             // Return the session object for discovery.
             match build_session(&dispatcher).await {
                 Ok(session) => {
-                    let json_body = serde_json::to_string(&session)
-                        .map_err(|e| {
-                            eprintln!("Failed to serialize session: {}", e);
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        })?;
+                    let json_body = serde_json::to_string(&session).map_err(|e| {
+                        eprintln!("Failed to serialize session: {}", e);
+                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    })?;
                     send_json_response(&mut writer, 200, &json_body).await?;
                     return Ok(());
                 }
                 Err(e) => {
-                    return send_response(&mut writer, 500, &format!("Failed to build session: {}", e))
-                        .await;
+                    return send_response(
+                        &mut writer,
+                        500,
+                        &format!("Failed to build session: {}", e),
+                    )
+                    .await;
                 }
             }
         }
@@ -201,41 +203,48 @@ async fn handle_connection(
 
                                 // Process the request through the dispatcher.
                                 match dispatcher.process(request, ctx).await {
-                                    Ok(response) => {
-                                        match serde_json::to_string(&response) {
-                                            Ok(json_response) => {
-                                                send_json_response(&mut writer, 200, &json_response)
-                                                    .await?;
-                                                return Ok(());
-                                            }
-                                            Err(e) => {
-                                                eprintln!("Failed to serialize response: {}", e);
-                                                return send_response(
-                                                    &mut writer,
-                                                    500,
-                                                    "Failed to serialize response",
-                                                )
-                                                .await;
-                                            }
+                                    Ok(response) => match serde_json::to_string(&response) {
+                                        Ok(json_response) => {
+                                            send_json_response(&mut writer, 200, &json_response)
+                                                .await?;
+                                            return Ok(());
                                         }
-                                    }
+                                        Err(e) => {
+                                            eprintln!("Failed to serialize response: {}", e);
+                                            return send_response(
+                                                &mut writer,
+                                                500,
+                                                "Failed to serialize response",
+                                            )
+                                            .await;
+                                        }
+                                    },
                                     Err(err) => {
                                         eprintln!("Request processing error: {:?}", err);
                                         let problem = err.problem_details();
                                         let http_status = problem
                                             .get("status")
                                             .and_then(|s| s.as_u64())
-                                            .unwrap_or(400) as u16;
+                                            .unwrap_or(400)
+                                            as u16;
                                         match serde_json::to_string(&problem) {
                                             Ok(json_err) => {
-                                                send_json_response(&mut writer, http_status, &json_err)
-                                                    .await?;
+                                                send_json_response(
+                                                    &mut writer,
+                                                    http_status,
+                                                    &json_err,
+                                                )
+                                                .await?;
                                                 return Ok(());
                                             }
                                             Err(e) => {
                                                 eprintln!("Failed to serialize error: {}", e);
-                                                return send_response(&mut writer, 500, "Server error")
-                                                    .await;
+                                                return send_response(
+                                                    &mut writer,
+                                                    500,
+                                                    "Server error",
+                                                )
+                                                .await;
                                             }
                                         }
                                     }

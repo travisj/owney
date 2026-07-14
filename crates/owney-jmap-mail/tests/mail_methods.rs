@@ -388,17 +388,20 @@ async fn email_query_rejects_unknown_filter_key() {
     let h = harness().await;
     let account_id = h.account_id.clone();
 
-    let responses = h.call(json!([
-        ["Email/query", {
-            "accountId": account_id,
-            "filter": {"typo_field": "value", "inMailbox": "ignored"},
-            "limit": 5
-        }, "c1"]
-    ])).await;
+    let responses = h
+        .call(json!([
+            ["Email/query", {
+                "accountId": account_id,
+                "filter": {"typo_field": "value", "inMailbox": "ignored"},
+                "limit": 5
+            }, "c1"]
+        ]))
+        .await;
 
     assert_eq!(responses[0].name(), "error");
     assert_eq!(
-        responses[0].arguments()["type"], "invalidArguments",
+        responses[0].arguments()["type"],
+        "invalidArguments",
         "got {responses:?}"
     );
 }
@@ -407,21 +410,25 @@ async fn email_query_rejects_unknown_filter_key() {
 async fn email_get_properties_subset() {
     let h = harness().await;
     // Discover id via a query (harness uses UUID EmailIds, not Message-IDs).
-    let id_responses = h.call(json!([
-        ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
-    ])).await;
+    let id_responses = h
+        .call(json!([
+            ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
+        ]))
+        .await;
     let email_id = id_responses[0].arguments()["ids"][0]
         .as_str()
         .expect("query id")
         .to_owned();
 
-    let responses = h.call(json!([
-        ["Email/get", {
-            "accountId": h.account_id,
-            "ids": [email_id.clone()],
-            "properties": ["id", "subject"],
-        }, "c1"]
-    ])).await;
+    let responses = h
+        .call(json!([
+            ["Email/get", {
+                "accountId": h.account_id,
+                "ids": [email_id.clone()],
+                "properties": ["id", "subject"],
+            }, "c1"]
+        ]))
+        .await;
     assert_eq!(responses[0].name(), "Email/get");
     let row = &responses[0].arguments()["list"][0];
     assert_eq!(row["id"], email_id, "id field returned");
@@ -444,21 +451,25 @@ async fn email_get_properties_subset() {
 #[tokio::test]
 async fn email_get_unknown_property_rejected() {
     let h = harness().await;
-    let id_responses = h.call(json!([
-        ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
-    ])).await;
+    let id_responses = h
+        .call(json!([
+            ["Email/query", {"accountId": h.account_id, "limit": 1}, "c0"]
+        ]))
+        .await;
     let email_id = id_responses[0].arguments()["ids"][0]
         .as_str()
         .expect("query id")
         .to_owned();
 
-    let responses = h.call(json!([
-        ["Email/get", {
-            "accountId": h.account_id,
-            "ids": [email_id],
-            "properties": ["id", "ttttotally_made_up"],
-        }, "c1"]
-    ])).await;
+    let responses = h
+        .call(json!([
+            ["Email/get", {
+                "accountId": h.account_id,
+                "ids": [email_id],
+                "properties": ["id", "ttttotally_made_up"],
+            }, "c1"]
+        ]))
+        .await;
     assert_eq!(responses[0].name(), "error");
     assert_eq!(responses[0].arguments()["type"], "invalidArguments");
 }
@@ -467,19 +478,24 @@ async fn email_get_unknown_property_rejected() {
 async fn mailbox_get_properties_subset() {
     let h = harness().await;
     // Requested subset of mailbox properties per RFC 8621 §6.1.
-    let responses = h.call(json!([
-        ["Mailbox/get", {
-            "accountId": h.account_id,
-            "properties": ["id", "name", "role"],
-        }, "c1"]
-    ])).await;
+    let responses = h
+        .call(json!([
+            ["Mailbox/get", {
+                "accountId": h.account_id,
+                "properties": ["id", "name", "role"],
+            }, "c1"]
+        ]))
+        .await;
     assert_eq!(responses[0].name(), "Mailbox/get");
     let list = &responses[0].arguments()["list"];
     let first = &list[0];
     assert!(first.get("id").is_some());
     assert!(first.get("name").is_some());
     assert!(first.get("role").is_some());
-    assert!(first.get("totalEmails").is_none(), "totalEmails NOT requested");
+    assert!(
+        first.get("totalEmails").is_none(),
+        "totalEmails NOT requested"
+    );
     assert!(first.get("myRights").is_none(), "myRights NOT requested");
     assert!(first.get("sortOrder").is_none(), "sortOrder NOT requested");
 }

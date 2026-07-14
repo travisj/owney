@@ -5,8 +5,8 @@ use std::sync::Arc;
 use owney_authn::{AuthInput, Authenticator};
 use owney_events::EventBus;
 use owney_smtp_in::{DeliverError, InboundMail, MailHandler, RcptVerdict};
-use owney_storage::Storage;
 use owney_spam::{SpamInput, SpamScanner};
+use owney_storage::Storage;
 
 pub struct ServerCore {
     pub storage: Arc<Storage>,
@@ -56,11 +56,16 @@ impl MailHandler for ServerCore {
 
         // Spam filtering: check message before routing to recipients
         let spam_verdict = if self.spam_config.enabled {
-            self.spam_scanner.scan(&self.storage, SpamInput {
-                remote_ip: mail.remote,
-                raw: &mail.raw,
-                account_id: owney_core::AccountId::new(), // Temp default; will use actual account per-recipient
-            }).await
+            self.spam_scanner
+                .scan(
+                    &self.storage,
+                    SpamInput {
+                        remote_ip: mail.remote,
+                        raw: &mail.raw,
+                        account_id: owney_core::AccountId::new(), // Temp default; will use actual account per-recipient
+                    },
+                )
+                .await
         } else {
             owney_spam::SpamVerdict::default()
         };
@@ -68,7 +73,10 @@ impl MailHandler for ServerCore {
         // Check for permanent spam rejection
         if spam_verdict.score >= self.spam_config.reject_threshold {
             tracing::warn!(score = spam_verdict.score, rules = ?spam_verdict.matched_rules, "message rejected by spam filter");
-            return Err(DeliverError::Permanent(format!("message rejected: spam score {:.2}", spam_verdict.score)));
+            return Err(DeliverError::Permanent(format!(
+                "message rejected: spam score {:.2}",
+                spam_verdict.score
+            )));
         }
 
         let spam_verdict_json = serde_json::to_string(&spam_verdict).ok();
@@ -87,7 +95,9 @@ impl MailHandler for ServerCore {
                 .resolve_recipient(recipient)
                 .await
                 .map_err(|err| DeliverError::Temporary(err.to_string()))?
-                .ok_or_else(|| DeliverError::Temporary(format!("{recipient} vanished after RCPT")))?;
+                .ok_or_else(|| {
+                    DeliverError::Temporary(format!("{recipient} vanished after RCPT"))
+                })?;
 
             // Harvest Autocrypt keys; transparently decrypt encrypted-to-us.
             let pgp = owney_pgp::pipeline::inbound(&self.storage, account.id, raw.clone())
@@ -127,13 +137,22 @@ impl MailHandler for ServerCore {
 
             let ingested = self
                 .storage
-                .ingest_email_with_chat(account.id, pgp.raw, mailbox, verdict_json.clone(), chat_mode)
+                .ingest_email_with_chat(
+                    account.id,
+                    pgp.raw,
+                    mailbox,
+                    verdict_json.clone(),
+                    chat_mode,
+                )
                 .await
                 .map_err(|err| DeliverError::Temporary(err.to_string()))?;
 
             // Store spam verdict
             if let Some(spam_json) = &spam_verdict_json {
-                let _ = self.storage.set_spam_verdict(&ingested.id.to_string(), spam_json).await;
+                let _ = self
+                    .storage
+                    .set_spam_verdict(&ingested.id.to_string(), spam_json)
+                    .await;
             }
 
             if let Some(status) = &pgp.pgp_status {

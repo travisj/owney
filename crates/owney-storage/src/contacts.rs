@@ -4,10 +4,10 @@
 //! Manual contact creation also supported for address book.
 
 use owney_core::{AccountId, ContactId};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
-use crate::error::StorageError;
 use crate::Storage;
+use crate::error::StorageError;
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -102,7 +102,10 @@ impl Storage {
                         params![contact_id.to_string(), account_id.to_string()],
                         |row| {
                             Ok(Contact {
-                                id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| ContactId::new()),
+                                id: row
+                                    .get::<_, String>(0)?
+                                    .parse()
+                                    .unwrap_or_else(|_| ContactId::new()),
                                 account_id,
                                 email: row.get(2)?,
                                 name: row.get(3)?,
@@ -133,7 +136,10 @@ impl Storage {
                         params![account_id.to_string(), email],
                         |row| {
                             Ok(Contact {
-                                id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| ContactId::new()),
+                                id: row
+                                    .get::<_, String>(0)?
+                                    .parse()
+                                    .unwrap_or_else(|_| ContactId::new()),
                                 account_id,
                                 email: row.get(2)?,
                                 name: row.get(3)?,
@@ -159,7 +165,10 @@ impl Storage {
                 let contacts = stmt
                     .query_map(params![account_id.to_string()], |row| {
                         Ok(Contact {
-                            id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| ContactId::new()),
+                            id: row
+                                .get::<_, String>(0)?
+                                .parse()
+                                .unwrap_or_else(|_| ContactId::new()),
                             account_id,
                             email: row.get(2)?,
                             name: row.get(3)?,
@@ -198,7 +207,10 @@ impl Storage {
     pub async fn delete_contact(&self, contact_id: ContactId) -> Result<(), StorageError> {
         self.db
             .call(move |conn| {
-                conn.execute("DELETE FROM contacts WHERE id = ?1", params![contact_id.to_string()])?;
+                conn.execute(
+                    "DELETE FROM contacts WHERE id = ?1",
+                    params![contact_id.to_string()],
+                )?;
                 Ok(())
             })
             .await
@@ -218,10 +230,17 @@ mod tests {
     async fn upsert_creates_new_contact() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         let contact = storage
-            .upsert_contact(acct.id, "bob@example.com".to_string(), Some("Bob Smith".to_string()))
+            .upsert_contact(
+                acct.id,
+                "bob@example.com".to_string(),
+                Some("Bob Smith".to_string()),
+            )
             .await
             .expect("upsert");
 
@@ -235,15 +254,26 @@ mod tests {
     async fn upsert_updates_existing_contact() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         storage
-            .upsert_contact(acct.id, "bob@example.com".to_string(), Some("Bob".to_string()))
+            .upsert_contact(
+                acct.id,
+                "bob@example.com".to_string(),
+                Some("Bob".to_string()),
+            )
             .await
             .expect("first upsert");
 
         let updated = storage
-            .upsert_contact(acct.id, "bob@example.com".to_string(), Some("Bob Smith".to_string()))
+            .upsert_contact(
+                acct.id,
+                "bob@example.com".to_string(),
+                Some("Bob Smith".to_string()),
+            )
             .await
             .expect("second upsert");
 
@@ -256,10 +286,17 @@ mod tests {
     async fn find_contact_by_email() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         storage
-            .upsert_contact(acct.id, "bob@example.com".to_string(), Some("Bob".to_string()))
+            .upsert_contact(
+                acct.id,
+                "bob@example.com".to_string(),
+                Some("Bob".to_string()),
+            )
             .await
             .expect("upsert");
 
@@ -278,14 +315,25 @@ mod tests {
     async fn list_contacts() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         storage
-            .upsert_contact(acct.id, "bob@example.com".to_string(), Some("Bob".to_string()))
+            .upsert_contact(
+                acct.id,
+                "bob@example.com".to_string(),
+                Some("Bob".to_string()),
+            )
             .await
             .expect("upsert 1");
         storage
-            .upsert_contact(acct.id, "charlie@example.com".to_string(), Some("Charlie".to_string()))
+            .upsert_contact(
+                acct.id,
+                "charlie@example.com".to_string(),
+                Some("Charlie".to_string()),
+            )
             .await
             .expect("upsert 2");
 

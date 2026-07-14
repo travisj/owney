@@ -3,8 +3,8 @@
 //! IndexWriter adds/updates documents on email ingest/deletion.
 //! IndexReader queries the index for text search.
 
-use std::path::PathBuf;
 use owney_core::EmailId;
+use std::path::PathBuf;
 use tantivy::schema::*;
 use tantivy::{Document, Index, IndexWriter as TantivyWriter};
 
@@ -61,9 +61,9 @@ impl IndexWriter {
         })?;
 
         let schema = email_schema();
-        let index = Index::open_in_dir(&index_path).or_else(|_| {
-            Index::create_in_dir(&index_path, schema)
-        }).map_err(|e| SearchError::Tantivy(e.to_string()))?;
+        let index = Index::open_in_dir(&index_path)
+            .or_else(|_| Index::create_in_dir(&index_path, schema))
+            .map_err(|e| SearchError::Tantivy(e.to_string()))?;
 
         let writer = index
             .writer(50_000_000) // 50MB buffer
@@ -137,14 +137,18 @@ impl std::fmt::Debug for IndexReader {
 impl IndexReader {
     /// Open an existing index at the given path.
     pub fn open(index_path: PathBuf) -> Result<Self, SearchError> {
-        let index = Index::open_in_dir(&index_path)
-            .map_err(|e| SearchError::Tantivy(e.to_string()))?;
+        let index =
+            Index::open_in_dir(&index_path).map_err(|e| SearchError::Tantivy(e.to_string()))?;
         Ok(Self { index })
     }
 
     /// Search for emails matching the query text with BM25 scoring.
     /// Returns ranked results with relevance scores (higher = more relevant).
-    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<SearchResult>, SearchError> {
+    pub async fn search(
+        &self,
+        query_text: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
         let schema = self.index.schema();
         let reader = self
             .index
@@ -177,10 +181,7 @@ impl IndexReader {
                     if let Some(email_id_val) = doc.get_first(email_id_field) {
                         if let Some(email_id_str) = email_id_val.as_text() {
                             if let Ok(email_id) = email_id_str.parse() {
-                                results.push(SearchResult {
-                                    email_id,
-                                    score,
-                                });
+                                results.push(SearchResult { email_id, score });
                             }
                         }
                     }
@@ -231,11 +232,23 @@ mod tests {
         let id2 = EmailId::new();
 
         writer
-            .index_email(id1, "alice@example.com", "bob@example.com", "Budget Report", "Q1 financials")
+            .index_email(
+                id1,
+                "alice@example.com",
+                "bob@example.com",
+                "Budget Report",
+                "Q1 financials",
+            )
             .await
             .expect("index 1");
         writer
-            .index_email(id2, "alice@example.com", "eve@example.com", "Meeting Notes", "Team standup at 2pm")
+            .index_email(
+                id2,
+                "alice@example.com",
+                "eve@example.com",
+                "Meeting Notes",
+                "Team standup at 2pm",
+            )
             .await
             .expect("index 2");
         writer.commit().await.expect("commit");
@@ -258,7 +271,13 @@ mod tests {
 
         let id1 = EmailId::new();
         writer
-            .index_email(id1, "alice@example.com", "bob@example.com", "Delete Me", "This email should be removed")
+            .index_email(
+                id1,
+                "alice@example.com",
+                "bob@example.com",
+                "Delete Me",
+                "This email should be removed",
+            )
             .await
             .expect("index");
         writer.commit().await.expect("commit");

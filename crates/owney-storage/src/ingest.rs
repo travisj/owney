@@ -62,10 +62,7 @@ fn parse_meta(raw: &[u8]) -> ParsedMeta {
     // Extract To addresses (typically a HeaderValue with one or more Address entries)
     let to_addrs: Vec<String> = Vec::new(); // Simplified for now - To header extraction can be added later
 
-    let body_text = message
-        .body_text(0)
-        .unwrap_or_default()
-        .to_string();
+    let body_text = message.body_text(0).unwrap_or_default().to_string();
 
     ParsedMeta {
         message_id: message.message_id().map(str::to_owned),

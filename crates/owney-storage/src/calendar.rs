@@ -8,10 +8,10 @@
 //! base event and rrule string.
 
 use owney_core::{AccountId, CalendarId, EventId};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
-use crate::error::StorageError;
 use crate::Storage;
+use crate::error::StorageError;
 
 #[derive(Debug, Clone)]
 pub struct Calendar {
@@ -29,8 +29,8 @@ pub struct CalendarEvent {
     pub calendar_id: CalendarId,
     pub title: String,
     pub description: Option<String>,
-    pub start: i64, // unix timestamp
-    pub end: i64,   // unix timestamp
+    pub start: i64,            // unix timestamp
+    pub end: i64,              // unix timestamp
     pub rrule: Option<String>, // RFC 5545 RRULE (e.g., "FREQ=WEEKLY;UNTIL=20260801T000000Z")
     pub created_at: i64,
     pub updated_at: i64,
@@ -87,7 +87,10 @@ impl Storage {
                         params![calendar_id.to_string(), account_id.to_string()],
                         |row| {
                             Ok(Calendar {
-                                id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                                id: row
+                                    .get::<_, String>(0)?
+                                    .parse()
+                                    .unwrap_or_else(|_| CalendarId::new()),
                                 account_id,
                                 name: row.get(2)?,
                                 description: row.get(3)?,
@@ -116,7 +119,10 @@ impl Storage {
                         params![calendar_id.to_string()],
                         |row| {
                             Ok(Calendar {
-                                id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                                id: row
+                                    .get::<_, String>(0)?
+                                    .parse()
+                                    .unwrap_or_else(|_| CalendarId::new()),
                                 account_id: row
                                     .get::<_, String>(1)?
                                     .parse()
@@ -134,7 +140,10 @@ impl Storage {
     }
 
     /// List all calendars for an account.
-    pub async fn list_calendars(&self, account_id: AccountId) -> Result<Vec<Calendar>, StorageError> {
+    pub async fn list_calendars(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<Calendar>, StorageError> {
         self.db
             .call(move |conn| {
                 let mut stmt = conn.prepare(
@@ -144,7 +153,10 @@ impl Storage {
                 let calendars = stmt
                     .query_map(params![account_id.to_string()], |row| {
                         Ok(Calendar {
-                            id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| CalendarId::new()),
+                            id: row
+                                .get::<_, String>(0)?
+                                .parse()
+                                .unwrap_or_else(|_| CalendarId::new()),
                             account_id,
                             name: row.get(2)?,
                             description: row.get(3)?,
@@ -204,7 +216,10 @@ impl Storage {
     }
 
     /// Get an event by ID.
-    pub async fn get_calendar_event(&self, event_id: EventId) -> Result<Option<CalendarEvent>, StorageError> {
+    pub async fn get_calendar_event(
+        &self,
+        event_id: EventId,
+    ) -> Result<Option<CalendarEvent>, StorageError> {
         self.db
             .call(move |conn| {
                 Ok(conn
@@ -232,7 +247,10 @@ impl Storage {
     }
 
     /// List events in a calendar.
-    pub async fn list_calendar_events(&self, calendar_id: CalendarId) -> Result<Vec<CalendarEvent>, StorageError> {
+    pub async fn list_calendar_events(
+        &self,
+        calendar_id: CalendarId,
+    ) -> Result<Vec<CalendarEvent>, StorageError> {
         self.db
             .call(move |conn| {
                 let mut stmt = conn.prepare(
@@ -317,7 +335,10 @@ impl Storage {
     pub async fn delete_calendar_event(&self, event_id: EventId) -> Result<(), StorageError> {
         self.db
             .call(move |conn| {
-                conn.execute("DELETE FROM calendar_events WHERE id = ?1", params![event_id.to_string()])?;
+                conn.execute(
+                    "DELETE FROM calendar_events WHERE id = ?1",
+                    params![event_id.to_string()],
+                )?;
                 Ok(())
             })
             .await
@@ -414,7 +435,10 @@ mod tests {
     async fn create_and_list_calendars() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         let cal = storage
             .create_calendar(acct.id, "Personal".to_string(), None)
@@ -423,7 +447,10 @@ mod tests {
 
         assert_eq!(cal.name, "Personal");
 
-        let calendars = storage.list_calendars(acct.id).await.expect("list calendars");
+        let calendars = storage
+            .list_calendars(acct.id)
+            .await
+            .expect("list calendars");
         assert_eq!(calendars.len(), 1);
         assert_eq!(calendars[0].id, cal.id);
 
@@ -434,7 +461,10 @@ mod tests {
     async fn create_and_fetch_event() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         let cal = storage
             .create_calendar(acct.id, "Work".to_string(), None)
@@ -454,7 +484,11 @@ mod tests {
             .await
             .expect("create event");
 
-        let fetched = storage.get_calendar_event(event.id).await.expect("fetch").expect("found");
+        let fetched = storage
+            .get_calendar_event(event.id)
+            .await
+            .expect("fetch")
+            .expect("found");
         assert_eq!(fetched.title, "Team Meeting");
         assert_eq!(fetched.start, now + 3600);
 
@@ -465,7 +499,10 @@ mod tests {
     async fn recurring_event() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create account");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create account");
 
         let cal = storage
             .create_calendar(acct.id, "Personal".to_string(), None)
@@ -485,7 +522,11 @@ mod tests {
             .await
             .expect("create event");
 
-        let fetched = storage.get_calendar_event(event.id).await.expect("fetch").expect("found");
+        let fetched = storage
+            .get_calendar_event(event.id)
+            .await
+            .expect("fetch")
+            .expect("found");
         assert_eq!(fetched.rrule, Some("FREQ=WEEKLY;BYDAY=MO".to_string()));
 
         storage.close();

@@ -93,7 +93,11 @@ pub async fn websocket(
         .on_upgrade(move |socket| handle_socket(socket, state, account)))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<ApiState>, account: owney_storage::Account) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: Arc<ApiState>,
+    account: owney_storage::Account,
+) {
     let account_id = account.id;
     let ctx = Arc::new(JmapCtx {
         account,

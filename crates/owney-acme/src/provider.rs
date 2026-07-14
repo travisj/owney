@@ -59,10 +59,9 @@ impl DnsProvider for CloudflareProvider {
             .await
             .map_err(|e| AcmeError::DnsProvider(format!("Cloudflare request failed: {e}")))?;
 
-        let result: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| AcmeError::DnsProvider(format!("Failed to parse Cloudflare response: {e}")))?;
+        let result: serde_json::Value = response.json().await.map_err(|e| {
+            AcmeError::DnsProvider(format!("Failed to parse Cloudflare response: {e}"))
+        })?;
 
         if !result["success"].as_bool().unwrap_or(false) {
             let errors = result["errors"]
@@ -99,10 +98,9 @@ impl DnsProvider for CloudflareProvider {
             .await
             .map_err(|e| AcmeError::DnsProvider(format!("Cloudflare request failed: {e}")))?;
 
-        let result: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| AcmeError::DnsProvider(format!("Failed to parse Cloudflare response: {e}")))?;
+        let result: serde_json::Value = response.json().await.map_err(|e| {
+            AcmeError::DnsProvider(format!("Failed to parse Cloudflare response: {e}"))
+        })?;
 
         let records = result["result"]
             .as_array()
@@ -187,8 +185,7 @@ impl Route53Provider {
     /// zone_id: The Route53 hosted zone ID for your domain.
     /// Credentials are loaded from AWS SDK (env vars, instance metadata, etc).
     pub async fn new(zone_id: String) -> Result<Self, AcmeError> {
-        let config =
-            aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = aws_sdk_route53::Client::new(&config);
 
         Ok(Self { zone_id, client })
@@ -237,7 +234,9 @@ impl DnsProvider for Route53Provider {
                 aws_sdk_route53::types::ChangeBatch::builder()
                     .changes(change)
                     .build()
-                    .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 batch: {e}")))?,
+                    .map_err(|e| {
+                        AcmeError::DnsProvider(format!("Failed to build Route53 batch: {e}"))
+                    })?,
             )
             .send()
             .await
@@ -283,7 +282,9 @@ impl DnsProvider for Route53Provider {
                 aws_sdk_route53::types::ChangeBatch::builder()
                     .changes(change)
                     .build()
-                    .map_err(|e| AcmeError::DnsProvider(format!("Failed to build Route53 batch: {e}")))?,
+                    .map_err(|e| {
+                        AcmeError::DnsProvider(format!("Failed to build Route53 batch: {e}"))
+                    })?,
             )
             .send()
             .await

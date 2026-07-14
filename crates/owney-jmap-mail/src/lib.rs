@@ -61,11 +61,30 @@ pub fn register(dispatcher: &mut Dispatcher<JmapCtx>) {
     dispatcher.register("ChatPreference/set", MAIL_CAPABILITY, chat_preference_set);
 
     // Calendar methods
-    dispatcher.add_capability(calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_capability());
-    dispatcher.register("Calendar/get", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_get);
-    dispatcher.register("Calendar/share", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_share);
-    dispatcher.register("CalendarInvitation/get", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_invitation_get);
-    dispatcher.register("CalendarInvitation/set", calendar_methods::CALENDAR_CAPABILITY, calendar_methods::calendar_invitation_set);
+    dispatcher.add_capability(
+        calendar_methods::CALENDAR_CAPABILITY,
+        calendar_methods::calendar_capability(),
+    );
+    dispatcher.register(
+        "Calendar/get",
+        calendar_methods::CALENDAR_CAPABILITY,
+        calendar_methods::calendar_get,
+    );
+    dispatcher.register(
+        "Calendar/share",
+        calendar_methods::CALENDAR_CAPABILITY,
+        calendar_methods::calendar_share,
+    );
+    dispatcher.register(
+        "CalendarInvitation/get",
+        calendar_methods::CALENDAR_CAPABILITY,
+        calendar_methods::calendar_invitation_get,
+    );
+    dispatcher.register(
+        "CalendarInvitation/set",
+        calendar_methods::CALENDAR_CAPABILITY,
+        calendar_methods::calendar_invitation_set,
+    );
 }
 
 fn storage_err(err: owney_storage::StorageError) -> MethodError {
@@ -172,20 +191,15 @@ impl Subset {
                 )));
             }
         }
-        let requested: std::collections::HashSet<String> =
-            requested.iter().cloned().collect();
+        let requested: std::collections::HashSet<String> = requested.iter().cloned().collect();
         Ok(Some(Self { requested }))
     }
 
-    fn select(
-        &self,
-        full: &serde_json::Map<String, Value>,
-    ) -> serde_json::Map<String, Value> {
+    fn select(&self, full: &serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
         // RFC 8621: zero-length list = "no properties" (return empty Map);
         // non-empty list = the listed properties. We trust the caller
         // already checked the list against the canonical allow-list.
-        full
-            .iter()
+        full.iter()
             .filter(|(k, _)| self.requested.contains(*k))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
@@ -288,7 +302,7 @@ fn mailbox_projected(
     project(subset, map)
 }
 
- async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
     let args: GetArgs = parse(args)?;
     let account_id = check_account(&ctx, &args.account_id)?;
 
@@ -296,7 +310,8 @@ fn mailbox_projected(
         .ids
         .as_ref()
         .ok_or_else(|| MethodError::InvalidArguments("Email/get requires ids".into()))?;
-    let parsed_ids: Vec<owney_core::EmailId> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+    let parsed_ids: Vec<owney_core::EmailId> =
+        ids.iter().filter_map(|id| id.parse().ok()).collect();
 
     let subset = match args.properties.as_ref() {
         None => None,
@@ -601,7 +616,8 @@ async fn thread_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError
         .ids
         .as_ref()
         .ok_or_else(|| MethodError::InvalidArguments("Thread/get requires ids".into()))?;
-    let thread_ids: Vec<owney_core::ThreadId> = ids.iter().filter_map(|id| id.parse().ok()).collect();
+    let thread_ids: Vec<owney_core::ThreadId> =
+        ids.iter().filter_map(|id| id.parse().ok()).collect();
 
     let threads = ctx
         .storage
@@ -842,7 +858,12 @@ async fn identity_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodErr
     check_account(&ctx, &args.account_id)?;
     // RFC 8621 §6.4: `name` is optional (nullable) — `null` when unset.
     // Don't fall back to the bare email; that's a leakage of the local-part.
-    let name = ctx.account.display_name.clone().map(Value::String).unwrap_or(Value::Null);
+    let name = ctx
+        .account
+        .display_name
+        .clone()
+        .map(Value::String)
+        .unwrap_or(Value::Null);
     Ok(json!({
         "accountId": args.account_id,
         "state": "0",
@@ -919,9 +940,8 @@ async fn chat_preference_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Me
                 .get("preference")
                 .and_then(Value::as_str)
                 .ok_or("preference is required".to_owned())?;
-            let preference =
-                owney_storage::ChatMode::from_str(pref_str)
-                    .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
+            let preference = owney_storage::ChatMode::from_str(pref_str)
+                .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
 
             ctx.storage
                 .set_chat_preference(account_id, contact_email, preference)
@@ -950,9 +970,8 @@ async fn chat_preference_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Me
                 .get("preference")
                 .and_then(Value::as_str)
                 .ok_or("preference is required".to_owned())?;
-            let preference =
-                owney_storage::ChatMode::from_str(pref_str)
-                    .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
+            let preference = owney_storage::ChatMode::from_str(pref_str)
+                .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
 
             ctx.storage
                 .set_chat_preference(account_id, &contact_email, preference)
@@ -1196,7 +1215,10 @@ async fn apply_update(
         if let Ok(raw) = ctx.storage.get_blob(blob_id).await {
             let tokens = owney_spam::bayes::tokenize(&raw);
             let is_spam = new_is_junk; // new_is_junk=true means moved TO junk (spam training)
-            let _ = ctx.storage.train_spam_tokens(account_id, &tokens, is_spam).await;
+            let _ = ctx
+                .storage
+                .train_spam_tokens(account_id, &tokens, is_spam)
+                .await;
         }
     }
 

@@ -130,8 +130,8 @@ impl SessionTokenManager {
 
     /// Generate a new session token with 24-hour TTL.
     pub async fn generate_token(&self, account_id: String) -> Result<String, String> {
-        use sha2::{Sha256, Digest};
         use rand::Rng;
+        use sha2::{Digest, Sha256};
 
         // Scope the ThreadRng so it is not held across the await below
         // (ThreadRng is !Send and would make the future !Send).
@@ -212,7 +212,10 @@ mod tests {
 
         // Store a challenge
         let challenge = b"challenge-data".to_vec();
-        let session_id = store.store_challenge(challenge.clone()).await.expect("store");
+        let session_id = store
+            .store_challenge(challenge.clone())
+            .await
+            .expect("store");
 
         // Retrieve it
         let retrieved = store
@@ -232,10 +235,7 @@ mod tests {
 
         // Store a pairing code
         let code = "ABC123DEF456".to_string();
-        let code_id = store
-            .store_pairing_code(code.clone())
-            .await
-            .expect("store");
+        let code_id = store.store_pairing_code(code.clone()).await.expect("store");
 
         // Retrieve it
         let retrieved = store
@@ -261,10 +261,7 @@ mod tests {
         assert!(token.starts_with("owk_"));
 
         // Validate it
-        let account_id = manager
-            .validate_token(&token)
-            .await
-            .expect("validate");
+        let account_id = manager.validate_token(&token).await.expect("validate");
         assert_eq!(account_id, "account-123");
 
         // Revoke it

@@ -251,11 +251,8 @@ async fn dispatch(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, Servi
         }
         "get_ai_activity" => ctx.get_ai_activity(usize_arg("limit", 20)).await,
         "nl_search" => {
-            ctx.nl_search(
-                &require(str_arg("query"), "query")?,
-                usize_arg("limit", 20),
-            )
-            .await
+            ctx.nl_search(&require(str_arg("query"), "query")?, usize_arg("limit", 20))
+                .await
         }
         "undo_action" => {
             ctx.undo_action(&require(str_arg("actionId"), "actionId")?)

@@ -7,11 +7,11 @@
 //! - Pending invitation workflow
 
 use owney_core::{AccountId, CalendarId};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::error::StorageError;
 use crate::Storage;
+use crate::error::StorageError;
 
 /// Sharing type: read-only sharing vs. read-write delegation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,11 +86,11 @@ pub struct CalendarSharing {
 pub struct CalendarFederation {
     pub id: String,
     pub calendar_id: CalendarId,
-    pub target_email: String,                   // user@domain.com
-    pub target_server_url: String,              // https://owney.domain.com
+    pub target_email: String,      // user@domain.com
+    pub target_server_url: String, // https://owney.domain.com
     pub sharing_type: SharingType,
     pub permissions: Permissions,
-    pub status: String,                         // "pending", "accepted", "syncing", "error"
+    pub status: String, // "pending", "accepted", "syncing", "error"
     pub last_sync_at: Option<i64>,
     pub sync_token: Option<String>,
     pub created_at: i64,
@@ -102,10 +102,10 @@ pub struct CalendarInvitation {
     pub id: String,
     pub calendar_id: CalendarId,
     pub inviter_account_id: AccountId,
-    pub invitee_email: String,                  // Can be "user@domain.com" or local account email
-    pub invitee_server_url: Option<String>,     // Set if federated
+    pub invitee_email: String, // Can be "user@domain.com" or local account email
+    pub invitee_server_url: Option<String>, // Set if federated
     pub sharing_type: SharingType,
-    pub status: String,                         // "pending", "accepted", "rejected"
+    pub status: String, // "pending", "accepted", "rejected"
     pub message: Option<String>,
     pub created_at: i64,
 }
@@ -189,7 +189,10 @@ impl Storage {
     }
 
     /// Get all calendars shared with an account (including shared & delegated).
-    pub async fn get_shared_calendars(&self, account_id: AccountId) -> Result<Vec<CalendarSharing>, StorageError> {
+    pub async fn get_shared_calendars(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<CalendarSharing>, StorageError> {
         self.db
             .call(move |conn| {
                 let mut stmt = conn.prepare(
@@ -265,7 +268,10 @@ impl Storage {
     }
 
     /// Get pending invitations for an account.
-    pub async fn get_pending_invitations(&self, account_id: AccountId) -> Result<Vec<CalendarInvitation>, StorageError> {
+    pub async fn get_pending_invitations(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<CalendarInvitation>, StorageError> {
         self.db
             .call(move |conn| {
                 let mut stmt = conn.prepare(
@@ -296,7 +302,10 @@ impl Storage {
     }
 
     /// Accept a federated invitation and create corresponding sharing record.
-    pub async fn accept_federation_invitation(&self, invitation_id: &str) -> Result<(), StorageError> {
+    pub async fn accept_federation_invitation(
+        &self,
+        invitation_id: &str,
+    ) -> Result<(), StorageError> {
         let invitation_id = invitation_id.to_string();
 
         self.db
@@ -433,10 +442,7 @@ impl Storage {
     }
 
     /// Mark federation as having an error during sync.
-    pub async fn mark_federation_error(
-        &self,
-        federation_id: &str,
-    ) -> Result<(), StorageError> {
+    pub async fn mark_federation_error(&self, federation_id: &str) -> Result<(), StorageError> {
         let federation_id = federation_id.to_string();
 
         self.db
@@ -463,11 +469,19 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
 
-        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
-        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
 
-        let calendar =
-            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
 
         let sharing = storage
             .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Sharing)
@@ -485,14 +499,27 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
 
-        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
-        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
 
-        let calendar =
-            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
 
         let sharing = storage
-            .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Delegation)
+            .share_calendar(
+                calendar.id,
+                alice.id,
+                bob.id,
+                super::SharingType::Delegation,
+            )
             .await
             .expect("share");
 
@@ -507,11 +534,19 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
 
-        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
-        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
 
-        let calendar =
-            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
 
         let sharing = storage
             .share_calendar(calendar.id, alice.id, bob.id, super::SharingType::Sharing)
@@ -523,7 +558,10 @@ mod tests {
         storage.accept_sharing(&sharing.id).await.expect("accept");
 
         // Verify the sharing is now accepted by fetching it
-        let shared = storage.get_shared_calendars(bob.id).await.expect("list shared");
+        let shared = storage
+            .get_shared_calendars(bob.id)
+            .await
+            .expect("list shared");
         assert_eq!(shared.len(), 1);
         assert_eq!(shared[0].status, "accepted");
 
@@ -535,11 +573,23 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
 
-        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
-        let bob = storage.create_account("bob@example.com", None).await.expect("bob");
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
 
-        let cal1 = storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("cal1");
-        let cal2 = storage.create_calendar(alice.id, "Work".to_string(), None).await.expect("cal2");
+        let cal1 = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("cal1");
+        let cal2 = storage
+            .create_calendar(alice.id, "Work".to_string(), None)
+            .await
+            .expect("cal2");
 
         let _share1 = storage
             .share_calendar(cal1.id, alice.id, bob.id, super::SharingType::Sharing)
@@ -551,12 +601,14 @@ mod tests {
             .await
             .expect("share2");
 
-        let shared = storage.get_shared_calendars(bob.id).await.expect("list shared");
+        let shared = storage
+            .get_shared_calendars(bob.id)
+            .await
+            .expect("list shared");
         assert_eq!(shared.len(), 2);
 
         // One should be sharing, one should be delegation
-        let types: std::collections::HashSet<_> =
-            shared.iter().map(|s| s.sharing_type).collect();
+        let types: std::collections::HashSet<_> = shared.iter().map(|s| s.sharing_type).collect();
         assert!(types.contains(&super::SharingType::Sharing));
         assert!(types.contains(&super::SharingType::Delegation));
 
@@ -568,9 +620,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
 
-        let alice = storage.create_account("alice@example.com", None).await.expect("alice");
-        let calendar =
-            storage.create_calendar(alice.id, "Personal".to_string(), None).await.expect("calendar");
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
 
         // Create federated invitation
         let invitation = storage

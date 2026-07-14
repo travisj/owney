@@ -1,24 +1,24 @@
 //! Passwordless authentication: WebAuthn passkeys, cross-device approval, recovery codes.
 
+pub mod approval;
 pub mod error;
 pub mod passkey;
-pub mod recovery;
-pub mod approval;
 pub mod qr;
+pub mod recovery;
 
 pub use error::AuthError;
 pub use passkey::{AuthenticationOptions, PasskeyCredential, PasskeyManager, RegistrationOptions};
 
 // Re-export the webauthn-rs types that API layers need to accept browser
 // responses and to persist the start/finish state objects.
+pub use approval::CrossDeviceApprovalManager;
+pub use qr::QrCodePairing;
+pub use recovery::RecoveryCodeManager;
 pub use webauthn_rs::prelude::{
     AuthenticationResult, CreationChallengeResponse, Passkey, PasskeyAuthentication,
     PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-pub use recovery::RecoveryCodeManager;
-pub use approval::CrossDeviceApprovalManager;
-pub use qr::QrCodePairing;
 
 /// Unique identifier for a passkey credential.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -73,11 +73,11 @@ impl PasswordlessAuthConfig {
         Self {
             rp_name: "Owney Mailserver".to_string(),
             recovery_code_count: 10,
-            approval_request_ttl: 300,  // 5 minutes
+            approval_request_ttl: 300, // 5 minutes
             max_pending_approvals: 5,
             cross_device_approval_enabled: true,
             magic_link_enabled: true,
-            magic_link_ttl: 900,  // 15 minutes
+            magic_link_ttl: 900, // 15 minutes
             rp_id,
             origins,
         }

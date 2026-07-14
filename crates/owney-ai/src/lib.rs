@@ -8,10 +8,10 @@
 //! 3. Fail open: an AI error never loses or blocks mail; it just means less
 //!    enrichment.
 
+pub mod nl_search;
 pub mod provider;
 pub mod skills;
 pub mod worker;
-pub mod nl_search;
 
 use owney_core::AccountId;
 use owney_storage::Storage;
@@ -50,11 +50,12 @@ pub async fn undo_action(
     let patch: serde_json::Value = serde_json::from_str(inverse)
         .map_err(|err| AiError::Provider(format!("bad inverse patch: {err}")))?;
 
-    let email_id: owney_core::EmailId = action
-        .email_id
-        .as_deref()
-        .and_then(|id| id.parse().ok())
-        .ok_or_else(|| AiError::Provider("action has no email".into()))?;
+    let email_id: owney_core::EmailId =
+        action
+            .email_id
+            .as_deref()
+            .and_then(|id| id.parse().ok())
+            .ok_or_else(|| AiError::Provider("action has no email".into()))?;
 
     let keywords = patch["keywords"].as_array().map(|list| {
         list.iter()

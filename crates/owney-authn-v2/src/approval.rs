@@ -1,5 +1,5 @@
 use crate::error::AuthError;
-use crate::{ApprovalRequestId, DevicePairingId, AuthResult};
+use crate::{ApprovalRequestId, AuthResult, DevicePairingId};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -9,9 +9,9 @@ use uuid::Uuid;
 pub struct ApprovalRequest {
     pub id: ApprovalRequestId,
     pub account_id: String,
-    pub source_device: String,              // "San Francisco, CA (IP: 192.0.2.1)"
+    pub source_device: String, // "San Francisco, CA (IP: 192.0.2.1)"
     pub request_type: ApprovalRequestType,
-    pub challenge: String,                  // Cryptographic challenge
+    pub challenge: String, // Cryptographic challenge
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub status: ApprovalStatus,
@@ -40,11 +40,11 @@ pub enum ApprovalStatus {
 pub struct PairedDevice {
     pub id: DevicePairingId,
     pub account_id: String,
-    pub device_name: String,            // "Alice's iPhone 15"
-    pub device_type: DeviceType,        // Mobile, Tablet, Desktop
-    pub public_key: Vec<u8>,            // For signature verification
+    pub device_name: String,     // "Alice's iPhone 15"
+    pub device_type: DeviceType, // Mobile, Tablet, Desktop
+    pub public_key: Vec<u8>,     // For signature verification
     pub can_approve: bool,
-    pub push_token: Option<String>,     // FCM token for Android, APNS for iOS
+    pub push_token: Option<String>, // FCM token for Android, APNS for iOS
     pub paired_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub disabled: bool,

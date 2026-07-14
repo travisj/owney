@@ -14,10 +14,10 @@ pub mod dkim;
 pub mod router;
 mod worker;
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::future::Future;
 
 use owney_events::EventBus;
 use owney_storage::Storage;
@@ -145,9 +145,10 @@ impl<R: Router> DeliveryService<R> {
     ) -> Result<Vec<uuid::Uuid>, DeliveryError> {
         // PGP first (Autocrypt header on everything; encrypt when every
         // recipient has a key), then DKIM over the final bytes.
-        let raw = owney_pgp::pipeline::outbound(&self.storage, account_id, mail_from, recipients, raw)
-            .await
-            .map_err(|err| DeliveryError::Temporary(format!("pgp: {err}")))?;
+        let raw =
+            owney_pgp::pipeline::outbound(&self.storage, account_id, mail_from, recipients, raw)
+                .await
+                .map_err(|err| DeliveryError::Temporary(format!("pgp: {err}")))?;
 
         // DKIM signature covers the message as sent.
         let mut signed = self.dkim.sign(&raw)?.into_bytes();
@@ -211,18 +212,25 @@ impl<R: Router> Submitter for DeliveryService<R> {
         chat_mode: bool,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>> {
         Box::pin(async move {
-            DeliveryService::submit_with_priority(self, account_id, &mail_from, &recipients, raw, chat_mode)
-                .await
-                .map_err(|err| match err {
-                    DeliveryError::Permanent(msg) => SubmitError::Refused(msg),
-                    DeliveryError::Temporary(msg)
-                    | DeliveryError::Dkim(msg)
-                    | DeliveryError::Dns(msg) => SubmitError::Transport(msg),
-                    DeliveryError::Storage(msg) => SubmitError::Transport(msg.to_string()),
-                    DeliveryError::Io(path, _) => {
-                        SubmitError::Transport(format!("io error on {}", path.display()))
-                    }
-                })
+            DeliveryService::submit_with_priority(
+                self,
+                account_id,
+                &mail_from,
+                &recipients,
+                raw,
+                chat_mode,
+            )
+            .await
+            .map_err(|err| match err {
+                DeliveryError::Permanent(msg) => SubmitError::Refused(msg),
+                DeliveryError::Temporary(msg)
+                | DeliveryError::Dkim(msg)
+                | DeliveryError::Dns(msg) => SubmitError::Transport(msg),
+                DeliveryError::Storage(msg) => SubmitError::Transport(msg.to_string()),
+                DeliveryError::Io(path, _) => {
+                    SubmitError::Transport(format!("io error on {}", path.display()))
+                }
+            })
         })
     }
 }
@@ -240,9 +248,8 @@ mod tests {
             _mail_from: String,
             _recipients: Vec<String>,
             _raw: Vec<u8>,
-        ) -> std::pin::Pin<
-            Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>,
-        > {
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<uuid::Uuid>, SubmitError>> + Send + '_>>
+        {
             Box::pin(async { Err(SubmitError::Refused("test stub".into())) })
         }
     }

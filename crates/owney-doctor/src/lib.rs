@@ -76,7 +76,10 @@ async fn check_queue_health(events: &EventBus, storage: &Storage) {
     let status = match storage.queue_stats().await {
         Ok((total, failed)) => {
             if failed > 0 {
-                ("warn", format!("{} messages queued, {} failed", total, failed))
+                (
+                    "warn",
+                    format!("{} messages queued, {} failed", total, failed),
+                )
             } else if total > 0 {
                 ("warn", format!("{} messages pending delivery", total))
             } else {

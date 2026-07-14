@@ -204,7 +204,6 @@ impl Storage {
             .await
     }
 
-
     /// Ids created/updated since a state token, for `Foo/changes`.
     pub async fn changes_since(
         &self,
@@ -605,7 +604,10 @@ mod tests {
     async fn changes_since_buckets_created_vs_updated() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create");
 
         let initial = storage
             .changes_since(acct.id, DataType::Email, 0, 256)
@@ -617,10 +619,21 @@ mod tests {
 
         let raw1 = b"From: a@x\r\nMessage-ID: <m1@x>\r\nSubject: one\r\n\r\none\r\n".to_vec();
         let raw2 = b"From: b@x\r\nMessage-ID: <m2@x>\r\nSubject: two\r\n\r\ntwo\r\n".to_vec();
-        let id1 = storage.ingest_email(acct.id, raw1, "inbox", None).await.expect("ingest1").id;
-        let id2 = storage.ingest_email(acct.id, raw2, "inbox", None).await.expect("ingest2").id;
+        let id1 = storage
+            .ingest_email(acct.id, raw1, "inbox", None)
+            .await
+            .expect("ingest1")
+            .id;
+        let id2 = storage
+            .ingest_email(acct.id, raw2, "inbox", None)
+            .await
+            .expect("ingest2")
+            .id;
 
-        let state_after_ingest = storage.state(acct.id, DataType::Email).await.expect("state");
+        let state_after_ingest = storage
+            .state(acct.id, DataType::Email)
+            .await
+            .expect("state");
         let changes = storage
             .changes_since(acct.id, DataType::Email, 0, 256)
             .await
@@ -646,7 +659,11 @@ mod tests {
             .changes_since(acct.id, DataType::Email, 0, 256)
             .await
             .expect("changes");
-        assert_eq!(all_changes.created.len(), 2, "both emails were created in the window");
+        assert_eq!(
+            all_changes.created.len(),
+            2,
+            "both emails were created in the window"
+        );
         assert!(all_changes.created.contains(&id1.to_string()));
         assert_eq!(
             all_changes.updated.len(),
@@ -671,12 +688,15 @@ mod tests {
     async fn changes_since_has_more_pages_correctly() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create");
 
         for i in 0..5 {
-            let raw = format!(
-                "From: a@x\r\nMessage-ID: <m{i}@x>\r\nSubject: {i}\r\n\r\nbody {i}\r\n"
-            ).into_bytes();
+            let raw =
+                format!("From: a@x\r\nMessage-ID: <m{i}@x>\r\nSubject: {i}\r\n\r\nbody {i}\r\n")
+                    .into_bytes();
             storage
                 .ingest_email(acct.id, raw, "inbox", None)
                 .await

@@ -217,7 +217,11 @@ fn main() -> anyhow::Result<()> {
         Command::Setup { verify, timeout } => setup(cli.config, verify, timeout),
         Command::Backup { command } => run(cli.config, move |config| backup(config, command)),
         Command::Doctor => run(cli.config, doctor),
-        Command::Update { binary, hash, dry_run } => run(cli.config, move |config| {
+        Command::Update {
+            binary,
+            hash,
+            dry_run,
+        } => run(cli.config, move |config| {
             update(config, binary, hash, dry_run)
         }),
         Command::Serve => run(cli.config, serve),
@@ -257,7 +261,9 @@ async fn setup_acme(config: &Config) -> anyhow::Result<()> {
         Box::new(CloudflareProvider::new(api_token, zone_id))
     } else if provider_choice == "route53" {
         let zone_id = prompt("AWS Route53 Zone ID (from Route53 console)")?;
-        println!("Make sure AWS credentials are set in environment: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY");
+        println!(
+            "Make sure AWS credentials are set in environment: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        );
         Box::new(
             Route53Provider::new(zone_id)
                 .await
@@ -267,7 +273,8 @@ async fn setup_acme(config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("unsupported DNS provider: {provider_choice}");
     };
 
-    let use_staging = prompt_yes_no("Use Let's Encrypt staging (for testing, unlimited rate limits)?")?;
+    let use_staging =
+        prompt_yes_no("Use Let's Encrypt staging (for testing, unlimited rate limits)?")?;
 
     let cert_paths = CertPaths::in_dir(&config.storage.data_dir);
 
@@ -275,17 +282,9 @@ async fn setup_acme(config: &Config) -> anyhow::Result<()> {
     println!("This may take 30-60 seconds as we wait for DNS propagation.\n");
 
     let acme_config = if use_staging {
-        AcmeConfig::staging_new(
-            vec![config.server.hostname.clone()],
-            email,
-            provider_choice,
-        )
+        AcmeConfig::staging_new(vec![config.server.hostname.clone()], email, provider_choice)
     } else {
-        AcmeConfig::new(
-            vec![config.server.hostname.clone()],
-            email,
-            provider_choice,
-        )
+        AcmeConfig::new(vec![config.server.hostname.clone()], email, provider_choice)
     };
 
     let client = AcmeClient::new(acme_config, dns_provider);
@@ -586,7 +585,9 @@ async fn serve(config: Config) -> anyhow::Result<()> {
 
     // Inbound SMTP listeners.
     let spam_scanner: Box<dyn owney_spam::SpamScanner> = if config.spam.enabled {
-        Box::new(owney_spam::HeuristicScanner::new(config.spam.dnsbl_zones.clone()))
+        Box::new(owney_spam::HeuristicScanner::new(
+            config.spam.dnsbl_zones.clone(),
+        ))
     } else {
         // Stub scanner that always returns clean verdict
         Box::new(owney_spam::HeuristicScanner::new(Vec::new()))
@@ -594,7 +595,9 @@ async fn serve(config: Config) -> anyhow::Result<()> {
 
     let core = Arc::new(ServerCore {
         storage: storage.clone(),
-        authenticator: Arc::new(owney_authn::Authenticator::new(config.server.hostname.clone())),
+        authenticator: Arc::new(owney_authn::Authenticator::new(
+            config.server.hostname.clone(),
+        )),
         spam_scanner,
         events: events.clone(),
         domain: config.server.domain.clone(),
@@ -1110,10 +1113,18 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .delete_account(account.id)
                 .await
                 .context("deleting account")?;
-            println!("permanently deleted account {} and all associated data", account.email);
+            println!(
+                "permanently deleted account {} and all associated data",
+                account.email
+            );
             Ok(())
         }
-        AdminCommand::CreateAlias { account, alias, label, expires_in_days } => {
+        AdminCommand::CreateAlias {
+            account,
+            alias,
+            label,
+            expires_in_days,
+        } => {
             anyhow::ensure!(
                 account.ends_with(&format!("@{}", config.server.domain)),
                 "{account} is not under this server's domain ({})",
@@ -1130,9 +1141,7 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .context("looking up account")?
                 .with_context(|| format!("no account {account}"))?;
 
-            let expires_at = expires_in_days.map(|days| {
-                unix_now() + (days as i64 * 86400)
-            });
+            let expires_at = expires_in_days.map(|days| unix_now() + (days as i64 * 86400));
 
             let alias_record = storage
                 .create_alias(acc.id, &alias, label.as_deref(), expires_at)
@@ -1174,7 +1183,11 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                     } else {
                         " (permanent)".to_string()
                     };
-                    let label_str = alias.label.as_ref().map(|l| format!(" [{}]", l)).unwrap_or_default();
+                    let label_str = alias
+                        .label
+                        .as_ref()
+                        .map(|l| format!(" [{}]", l))
+                        .unwrap_or_default();
                     println!("  {}{}{}", alias.alias_email, label_str, expires_str);
                 }
             }
@@ -1246,15 +1259,17 @@ async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
         BackupCommand::Create { output } => {
             let default_output = config.storage.data_dir.join("backups");
             let output_dir = output.as_ref().unwrap_or(&default_output);
-            std::fs::create_dir_all(output_dir)
-                .context("creating output directory")?;
+            std::fs::create_dir_all(output_dir).context("creating output directory")?;
 
             let archive_path = owney_backup::create_backup(&config, output_dir)
                 .await
                 .context("creating backup")?;
 
             println!("✓ Backup created: {}", archive_path.display());
-            println!("  To restore: mailserverd backup restore {}", archive_path.display());
+            println!(
+                "  To restore: mailserverd backup restore {}",
+                archive_path.display()
+            );
             Ok(())
         }
         BackupCommand::Restore { archive, target } => {
@@ -1263,8 +1278,7 @@ async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
                 !target_dir.exists() || std::fs::read_dir(&target_dir)?.next().is_none(),
                 "target directory must be empty or non-existent"
             );
-            std::fs::create_dir_all(&target_dir)
-                .context("creating target directory")?;
+            std::fs::create_dir_all(&target_dir).context("creating target directory")?;
 
             // Restore master key first (user must provide it)
             let master_key_src = config.storage.data_dir.join(owney_storage::MASTER_KEY_FILE);
@@ -1283,7 +1297,10 @@ async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
 
             println!("✓ Backup restored: version {}", manifest.version);
             println!("  Data directory: {}", target_dir.display());
-            println!("  Master key hash: {} (verify matches backup)", manifest.master_key_hash);
+            println!(
+                "  Master key hash: {} (verify matches backup)",
+                manifest.master_key_hash
+            );
             Ok(())
         }
     }
@@ -1296,8 +1313,7 @@ async fn update(
     dry_run: bool,
 ) -> anyhow::Result<()> {
     // Get the current binary path (ourselves)
-    let current_binary = std::env::current_exe()
-        .context("determining current binary path")?;
+    let current_binary = std::env::current_exe().context("determining current binary path")?;
 
     println!("Mailserver Update");
     println!("================");
@@ -1307,13 +1323,17 @@ async fn update(
     println!();
 
     // Perform update (or dry-run)
-    let report = owney_update::perform_update(&config, &new_binary, &expected_hash, &current_binary)
-        .await
-        .context("update failed")?;
+    let report =
+        owney_update::perform_update(&config, &new_binary, &expected_hash, &current_binary)
+            .await
+            .context("update failed")?;
 
     if dry_run {
         println!("✓ Dry-run successful");
-        println!("  Migrations: {}", if report.migrations_ok { "OK" } else { "FAILED" });
+        println!(
+            "  Migrations: {}",
+            if report.migrations_ok { "OK" } else { "FAILED" }
+        );
         println!("  Binary would be swapped (not done in dry-run mode)");
         return Ok(());
     }

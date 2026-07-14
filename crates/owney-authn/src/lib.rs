@@ -184,7 +184,9 @@ impl DmarcStatus {
     pub fn parse(token: &str) -> Self {
         match token {
             "pass" => Self::Pass,
-            "fail" => Self::Fail { reason: DmarcFailReason::Other },
+            "fail" => Self::Fail {
+                reason: DmarcFailReason::Other,
+            },
             "temperror" => Self::TempError,
             "permerror" => Self::PermError,
             _ => Self::None,
@@ -234,7 +236,10 @@ impl AuthVerdict {
 
     /// Typed view of each DKIM signature's `result`.
     pub fn dkim_statuses(&self) -> Vec<DkimStatus> {
-        self.dkim.iter().map(|d| DkimStatus::parse(&d.result)).collect()
+        self.dkim
+            .iter()
+            .map(|d| DkimStatus::parse(&d.result))
+            .collect()
     }
 }
 
@@ -263,9 +268,9 @@ impl AuthVerdict {
         // whitespace, or non-ASCII must be quoted. Quoting protects the
         // `parts.join(";")` boundary from being interpreted as the
         // start of a new method-spec.
-        let authserv_id = if authserv_id.contains(|c: char| {
-            c == ';' || c.is_whitespace() || c.is_ascii_control()
-        }) {
+        let authserv_id = if authserv_id
+            .contains(|c: char| c == ';' || c.is_whitespace() || c.is_ascii_control())
+        {
             format!("\"{}\"", authserv_id.replace('"', "\\\""))
         } else {
             authserv_id.to_owned()
@@ -335,7 +340,9 @@ impl Authenticator {
     /// every field forced to `"temperror"` so downstream policy still gets a
     /// result.
     pub async fn verify(&self, input: AuthInput<'_>) -> AuthVerdict {
-        match tokio::time::timeout(std::time::Duration::from_secs(10), self.verify_inner(input)).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), self.verify_inner(input))
+            .await
+        {
             Ok(verdict) => verdict,
             Err(_elapsed) => {
                 tracing::warn!(remote_ip = %input.remote_ip, "auth verify hit the 10s wall-clock timeout");
@@ -390,15 +397,15 @@ impl Authenticator {
                     .await;
 
                 let dkim_summaries = dkim
-                     .iter()
-                     .map(|output| DkimSummary {
-                         domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
-                         selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
-                         result: dkim_result_str(output.result()).to_owned(),
-                         signature_at: output.signature().map(|s| s.t).unwrap_or(0),
-                         expires_at: output.signature().map(|s| s.x).unwrap_or(0),
-                     })
-                     .collect();
+                    .iter()
+                    .map(|output| DkimSummary {
+                        domain: output.signature().map(|s| s.d.clone()).unwrap_or_default(),
+                        selector: output.signature().map(|s| s.s.clone()).unwrap_or_default(),
+                        result: dkim_result_str(output.result()).to_owned(),
+                        signature_at: output.signature().map(|s| s.t).unwrap_or(0),
+                        expires_at: output.signature().map(|s| s.x).unwrap_or(0),
+                    })
+                    .collect();
 
                 let dmarc_result = strongest_dmarc(&dmarc);
                 (
@@ -529,7 +536,15 @@ mod tests {
 
     #[test]
     fn spf_status_round_trip() {
-        for token in ["pass", "fail", "softfail", "neutral", "temperror", "permerror", "none"] {
+        for token in [
+            "pass",
+            "fail",
+            "softfail",
+            "neutral",
+            "temperror",
+            "permerror",
+            "none",
+        ] {
             let s = SpfStatus::parse(token);
             assert_eq!(s.as_str(), token, "round-trip {token}");
         }
@@ -553,7 +568,10 @@ mod tests {
         }
         assert_eq!(DmarcStatus::parse("none"), DmarcStatus::None);
         // Fail tokens always carry `reason: Other` since the wire form doesn't carry the reason.
-        assert!(matches!(DmarcStatus::parse("fail"), DmarcStatus::Fail { .. }));
+        assert!(matches!(
+            DmarcStatus::parse("fail"),
+            DmarcStatus::Fail { .. }
+        ));
     }
 
     #[test]
@@ -648,7 +666,7 @@ mod dkim_summary_tests {
 
 #[cfg(test)]
 mod timeout_tests {
-    use super::{AuthVerdict, DmarcStatus, DkimStatus, SpfStatus};
+    use super::{AuthVerdict, DkimStatus, DmarcStatus, SpfStatus};
 
     #[test]
     fn timeout_verdict_is_all_temperror() {

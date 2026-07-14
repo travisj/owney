@@ -23,7 +23,10 @@ impl WsEvent {
     /// Convert internal Event to WebSocket event.
     pub fn from_event(event: &Event) -> Vec<WsEvent> {
         match event {
-            Event::StateChange { account_id, changed } => {
+            Event::StateChange {
+                account_id,
+                changed,
+            } => {
                 let mut events = Vec::new();
                 for (data_type, modseq) in changed {
                     events.push(WsEvent {
@@ -74,7 +77,10 @@ impl WsEvent {
             } => {
                 vec![WsEvent {
                     event_type: "security.event".to_string(),
-                    account_id: account_id.as_ref().map(|a| a.to_string()).unwrap_or_default(),
+                    account_id: account_id
+                        .as_ref()
+                        .map(|a| a.to_string())
+                        .unwrap_or_default(),
                     payload: json!({
                         "kind": format!("{:?}", kind),
                         "detail": detail

@@ -63,7 +63,9 @@ impl Storage {
         let domain = recipient
             .rsplit_once('@')
             .map(|(_, domain)| domain.to_lowercase())
-            .ok_or_else(|| StorageError::BadInput(format!("recipient {recipient} has no domain")))?;
+            .ok_or_else(|| {
+                StorageError::BadInput(format!("recipient {recipient} has no domain"))
+            })?;
         let item = QueueItem {
             id: Uuid::now_v7(),
             account_id,
@@ -135,7 +137,17 @@ impl Storage {
                     .collect::<Result<Vec<_>, _>>()?;
                 rows.into_iter()
                     .map(
-                        |(id, account, blob, mail_from, recipient, domain, attempts, next, priority)| {
+                        |(
+                            id,
+                            account,
+                            blob,
+                            mail_from,
+                            recipient,
+                            domain,
+                            attempts,
+                            next,
+                            priority,
+                        )| {
                             Ok(QueueItem {
                                 id: id.parse().map_err(|_| {
                                     StorageError::Corrupt(format!("bad queue id {id}"))
@@ -271,12 +283,21 @@ mod tests {
     async fn reset_stale_claims_resets_sending_to_queued() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (storage, _events) = harness(&dir).await;
-        let acct = storage.create_account("alice@example.com", None).await.expect("create");
+        let acct = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("create");
 
         use owney_core::BlobId;
         let blob = BlobId([0xab; 32]);
-        let r1 = storage.enqueue(acct.id, blob, "alice@example.com", "bob@x.test").await.expect("e1");
-        let r2 = storage.enqueue(acct.id, blob, "alice@example.com", "carol@x.test").await.expect("e2");
+        let r1 = storage
+            .enqueue(acct.id, blob, "alice@example.com", "bob@x.test")
+            .await
+            .expect("e1");
+        let r2 = storage
+            .enqueue(acct.id, blob, "alice@example.com", "carol@x.test")
+            .await
+            .expect("e2");
         assert_ne!(r1.id, r2.id);
 
         // Simulate a worker that claimed the first row but crashed.

@@ -1,8 +1,8 @@
 //! Spam filtering storage: token counts for Naive Bayes classifier training.
 
-use std::collections::HashMap;
 use owney_core::AccountId;
 use rusqlite::params;
+use std::collections::HashMap;
 
 use crate::{Storage, StorageError};
 
@@ -83,7 +83,11 @@ impl Storage {
     }
 
     /// Set the spam_results JSON for an email after scanning.
-    pub async fn set_spam_verdict(&self, email_id: &str, verdict_json: &str) -> Result<(), StorageError> {
+    pub async fn set_spam_verdict(
+        &self,
+        email_id: &str,
+        verdict_json: &str,
+    ) -> Result<(), StorageError> {
         let email_id = email_id.to_owned();
         let verdict_json = verdict_json.to_owned();
         self.db

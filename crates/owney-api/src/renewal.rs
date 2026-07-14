@@ -77,9 +77,17 @@ async fn check_and_renew(
     let domains = vec![config.server.hostname.clone()];
 
     let acme_cfg = if acme_config.staging {
-        AcmeConfig::staging_new(domains, acme_config.email.clone(), acme_config.dns_provider.clone())
+        AcmeConfig::staging_new(
+            domains,
+            acme_config.email.clone(),
+            acme_config.dns_provider.clone(),
+        )
     } else {
-        AcmeConfig::new(domains, acme_config.email.clone(), acme_config.dns_provider.clone())
+        AcmeConfig::new(
+            domains,
+            acme_config.email.clone(),
+            acme_config.dns_provider.clone(),
+        )
     };
 
     // Request new certificate

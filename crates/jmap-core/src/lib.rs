@@ -358,8 +358,7 @@ impl<Ctx: Send + Sync + 'static> Dispatcher<Ctx> {
                 None => handler(arguments, ctx.clone()).await,
             }
         };
-        match AssertUnwindSafe(fut).catch_unwind().await
-        {
+        match AssertUnwindSafe(fut).catch_unwind().await {
             Ok(value) => value,
             Err(panic) => {
                 let msg = if let Some(s) = panic.downcast_ref::<&'static str>() {
@@ -615,8 +614,12 @@ mod tests {
             response.method_responses[0].arguments()["type"],
             "serverFail"
         );
-        assert!(response.method_responses[0].arguments()["description"]
-            .as_str().unwrap().contains("handler explosion"));
+        assert!(
+            response.method_responses[0].arguments()["description"]
+                .as_str()
+                .unwrap()
+                .contains("handler explosion")
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -640,14 +643,17 @@ mod tests {
             .await
             .expect("process");
         assert_eq!(
-            response.method_responses[0].arguments()["type"], "serverFail",
+            response.method_responses[0].arguments()["type"],
+            "serverFail",
         );
     }
 
     #[tokio::test]
     async fn subsequent_calls_run_after_a_panic() {
         let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
-        dispatcher.register("Thing/crash", CORE_CAPABILITY, |_args, _ctx| async { panic!("x") });
+        dispatcher.register("Thing/crash", CORE_CAPABILITY, |_args, _ctx| async {
+            panic!("x")
+        });
         let response = dispatcher
             .process(
                 request(json!({
@@ -703,7 +709,9 @@ mod tests {
     #[tokio::test]
     async fn register_auto_declares_capability() {
         let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
-        dispatcher.register("Foo/get", "urn:example:auto", |_a, _c| async { Ok(json!({})) });
+        dispatcher.register("Foo/get", "urn:example:auto", |_a, _c| async {
+            Ok(json!({}))
+        });
         assert!(dispatcher.capabilities().contains_key("urn:example:auto"));
     }
 
@@ -711,10 +719,15 @@ mod tests {
     async fn session_state_can_be_bumped() {
         let mut dispatcher: Dispatcher<()> = Dispatcher::new("s0");
         dispatcher.set_session_state("s1");
-        let response = dispatcher.process(
-            request(json!({"using": [CORE_CAPABILITY], "methodCalls": [["Core/echo", {}, "c1"]]})),
-            Arc::new(()),
-        ).await.expect("process");
+        let response = dispatcher
+            .process(
+                request(
+                    json!({"using": [CORE_CAPABILITY], "methodCalls": [["Core/echo", {}, "c1"]]}),
+                ),
+                Arc::new(()),
+            )
+            .await
+            .expect("process");
         assert_eq!(response.session_state, "s1");
     }
 }

@@ -78,7 +78,11 @@ async fn process_item<R: Router>(
         Err(DeliveryError::Permanent(error)) => AttemptOutcome::Failed { error },
         Err(err) => {
             let attempts = item.attempts as usize;
-            let backoff_schedule = if item.priority == 1 { &CHAT_BACKOFF[..] } else { &BACKOFF[..] };
+            let backoff_schedule = if item.priority == 1 {
+                &CHAT_BACKOFF[..]
+            } else {
+                &BACKOFF[..]
+            };
             match backoff_schedule.get(attempts) {
                 Some(delay) => {
                     // ±10% jitter to avoid thundering-herd retries when a relay
@@ -326,7 +330,8 @@ fn build_dsn(params: &DeliveryParams, item: &QueueItem, error: &str, status_code
          \r\n\
          --{boundary}--\r\n",
         attempts = item.attempts + 1,
-    ).into_bytes()
+    )
+    .into_bytes()
 }
 
 async fn bounce(storage: &Storage, params: &DeliveryParams, item: &QueueItem, error: &str) {
@@ -401,7 +406,10 @@ mod dsn_tests {
             Some("5.1.1"),
         );
         assert!(parse_enhanced_status("connection refused").is_none());
-        assert!(parse_enhanced_status("5.5.0").is_some(), "plain 5.5.0 is valid");
+        assert!(
+            parse_enhanced_status("5.5.0").is_some(),
+            "plain 5.5.0 is valid"
+        );
     }
 
     #[test]
@@ -466,13 +474,17 @@ mod parse_status_tests {
         // Not N.N.N.
         for bad in [
             "550 No such user",
-            "550 5.1 No such user",       // two-part code
-            "550 5.a.1 bad",                // alpha
-            "550.0.0 no space",             // no whitespace, should not match
-            "5.0.0 ok",                     // standalone "5.0.0" should still match
+            "550 5.1 No such user", // two-part code
+            "550 5.a.1 bad",        // alpha
+            "550.0.0 no space",     // no whitespace, should not match
+            "5.0.0 ok",             // standalone "5.0.0" should still match
         ] {
             let got = parse_enhanced_status(bad);
-            let expect = if bad == "5.0.0 ok" { Some("5.0.0".to_owned()) } else { None };
+            let expect = if bad == "5.0.0 ok" {
+                Some("5.0.0".to_owned())
+            } else {
+                None
+            };
             assert_eq!(got.as_ref(), expect.as_ref(), "input was {bad:?}");
         }
     }

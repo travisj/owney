@@ -181,7 +181,10 @@ mod tests {
         // Either Closed or WriterPanicked is acceptable to the caller; the
         // critical invariant is that the writer thread survives.
         assert!(
-            matches!(first, Err(StorageError::Closed) | Err(StorageError::WriterPanicked(_))),
+            matches!(
+                first,
+                Err(StorageError::Closed) | Err(StorageError::WriterPanicked(_))
+            ),
             "panic must surface as a typed error, not as a thread kill that we can't observe (got {first:?})"
         );
 

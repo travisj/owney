@@ -34,7 +34,10 @@ impl std::fmt::Debug for AcmeClient {
 impl AcmeClient {
     /// Creates a new ACME client.
     pub fn new(config: AcmeConfig, dns_provider: Box<dyn DnsProvider>) -> Self {
-        Self { config, dns_provider }
+        Self {
+            config,
+            dns_provider,
+        }
     }
 
     /// Requests a new certificate from Let's Encrypt.

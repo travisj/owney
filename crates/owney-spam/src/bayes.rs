@@ -3,13 +3,17 @@
 //! Trains on emails moved to/from the Junk mailbox role. Implements classic
 //! Bayes' theorem with Laplace (add-1) smoothing to avoid zero-probability issues.
 
-use std::collections::HashMap;
 use owney_core::AccountId;
 use owney_storage::Storage;
+use std::collections::HashMap;
 
 /// Classify a message as ham or spam using Naive Bayes.
 /// Returns P(spam | tokens) if training data exists, None if not trained yet.
-pub async fn classify(storage: &Storage, account_id: AccountId, raw: &[u8]) -> Result<Option<f32>, String> {
+pub async fn classify(
+    storage: &Storage,
+    account_id: AccountId,
+    raw: &[u8],
+) -> Result<Option<f32>, String> {
     let tokens = tokenize(raw);
     if tokens.is_empty() {
         return Ok(None);

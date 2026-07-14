@@ -19,9 +19,7 @@ pub async fn serve_imap(
     info!("IMAP connection from {}", remote);
 
     // Send greeting (RFC 9051 §7.1)
-    stream
-        .write_all(b"* OK Owney IMAP4rev2 ready\r\n")
-        .await?;
+    stream.write_all(b"* OK Owney IMAP4rev2 ready\r\n").await?;
     stream.flush().await?;
 
     let mut session = ImapSession::new(storage, remote);

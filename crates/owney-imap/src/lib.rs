@@ -16,9 +16,9 @@
 //! - STORE (flags → use JMAP Email/set)
 //! - DELETE, EXPUNGE (→ use JMAP Email/set with destroy)
 
+pub mod commands;
 pub mod server;
 pub mod session;
-pub mod commands;
 
 use std::net::IpAddr;
 use std::sync::Arc;

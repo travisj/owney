@@ -46,7 +46,9 @@ impl SearchIndex {
         let writer_arc = self.get_writer().await?;
         let mut writer_guard = writer_arc.write().await;
         if let Some(ref mut writer) = *writer_guard {
-            writer.index_email(email_id, from, to, subject, body).await?;
+            writer
+                .index_email(email_id, from, to, subject, body)
+                .await?;
             writer.commit().await?;
         }
         Ok(())
@@ -64,7 +66,11 @@ impl SearchIndex {
     }
 
     /// Search for emails matching the query text with BM25 scoring.
-    pub async fn search(&self, query_text: &str, limit: usize) -> Result<Vec<SearchResult>, SearchError> {
+    pub async fn search(
+        &self,
+        query_text: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
         let reader = IndexReader::open(self.index_path.clone())?;
         reader.search(query_text, limit).await
     }
@@ -105,7 +111,13 @@ mod tests {
 
         let email_id = EmailId::new();
         index
-            .index_email(email_id, "alice@example.com", "bob@example.com", "Delete Me", "remove this")
+            .index_email(
+                email_id,
+                "alice@example.com",
+                "bob@example.com",
+                "Delete Me",
+                "remove this",
+            )
             .await
             .expect("index");
 

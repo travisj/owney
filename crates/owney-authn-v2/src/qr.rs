@@ -1,5 +1,5 @@
-use crate::error::AuthError;
 use crate::AuthResult;
+use crate::error::AuthError;
 use chrono::{DateTime, Duration, Utc};
 use qrcode::{QrCode, render::unicode};
 use serde::{Deserialize, Serialize};
@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 /// A QR code for device pairing (e.g., terminal to mobile).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QrCodePairing {
-    pub pairing_code: String,           // Random code only recipient knows
-    pub public_key: Vec<u8>,            // Server's public key for TLS binding
+    pub pairing_code: String, // Random code only recipient knows
+    pub public_key: Vec<u8>,  // Server's public key for TLS binding
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
-    pub server_url: String,             // https://example.com
+    pub server_url: String, // https://example.com
     pub used: bool,
 }
 
@@ -20,7 +20,7 @@ pub struct QrCodePairing {
 pub struct QrPairingPayload {
     pub pairing_code: String,
     pub server_url: String,
-    pub expires_at: i64,  // Unix timestamp
+    pub expires_at: i64,   // Unix timestamp
     pub signature: String, // HMAC-SHA256 of above fields
 }
 
@@ -112,12 +112,9 @@ mod tests {
 
     #[test]
     fn test_generate_qr_pairing() {
-        let qr = QrCodePairing::generate(
-            "https://mail.example.com".to_string(),
-            vec![1, 2, 3],
-            300,
-        )
-        .unwrap();
+        let qr =
+            QrCodePairing::generate("https://mail.example.com".to_string(), vec![1, 2, 3], 300)
+                .unwrap();
 
         assert!(!qr.pairing_code.is_empty());
         assert!(qr.is_valid());
@@ -140,12 +137,9 @@ mod tests {
 
     #[test]
     fn test_qr_mark_used() {
-        let mut qr = QrCodePairing::generate(
-            "https://mail.example.com".to_string(),
-            vec![1, 2, 3],
-            300,
-        )
-        .unwrap();
+        let mut qr =
+            QrCodePairing::generate("https://mail.example.com".to_string(), vec![1, 2, 3], 300)
+                .unwrap();
 
         assert!(qr.is_valid());
         qr.mark_used();
@@ -154,16 +148,15 @@ mod tests {
 
     #[test]
     fn test_terminal_qr_generation() {
-        let qr = QrCodePairing::generate(
-            "https://mail.example.com".to_string(),
-            vec![1, 2, 3],
-            300,
-        )
-        .unwrap();
+        let qr =
+            QrCodePairing::generate("https://mail.example.com".to_string(), vec![1, 2, 3], 300)
+                .unwrap();
 
         let terminal_qr = qr.to_terminal_qr().unwrap();
         assert!(!terminal_qr.is_empty());
         // QR should contain Unicode box characters
-        assert!(terminal_qr.contains("█") || terminal_qr.contains("▀") || terminal_qr.contains("▄"));
+        assert!(
+            terminal_qr.contains("█") || terminal_qr.contains("▀") || terminal_qr.contains("▄")
+        );
     }
 }

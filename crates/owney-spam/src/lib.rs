@@ -10,10 +10,10 @@ pub mod bayes;
 pub mod dnsbl;
 pub mod rules;
 
-use std::net::IpAddr;
 use owney_core::AccountId;
 use owney_storage::Storage;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 /// A spam scanning verdict for one message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +73,9 @@ impl SpamScanner for HeuristicScanner {
             verdict.dnsbl_hits = hits.clone();
             if !hits.is_empty() {
                 verdict.score += 0.3; // 30% for DNSBL hit
-                verdict.matched_rules.push(format!("DNSBL hit: {}", hits.join(", ")));
+                verdict
+                    .matched_rules
+                    .push(format!("DNSBL hit: {}", hits.join(", ")));
             }
         }
 
@@ -87,7 +89,9 @@ impl SpamScanner for HeuristicScanner {
             verdict.bayes_prob = Some(bayes_prob);
             verdict.score = (verdict.score * 0.3) + (bayes_prob * 0.7); // 70% weight for Bayes
             if bayes_prob > 0.8 {
-                verdict.matched_rules.push(format!("Bayes: {:.1}% spam", bayes_prob * 100.0));
+                verdict
+                    .matched_rules
+                    .push(format!("Bayes: {:.1}% spam", bayes_prob * 100.0));
             }
         }
 

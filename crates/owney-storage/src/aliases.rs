@@ -83,7 +83,10 @@ impl Storage {
     }
 
     /// Resolve an alias email to its owner account (if active and not expired).
-    pub async fn alias_target_account(&self, alias_email: &str) -> Result<Option<Account>, StorageError> {
+    pub async fn alias_target_account(
+        &self,
+        alias_email: &str,
+    ) -> Result<Option<Account>, StorageError> {
         let alias_email = alias_email.trim().to_lowercase();
         self.db
             .call(move |conn| {
@@ -109,10 +112,7 @@ impl Storage {
         let id = id.to_owned();
         self.db
             .call(move |conn| {
-                conn.execute(
-                    "UPDATE aliases SET active = 0 WHERE id = ?1",
-                    [id],
-                )?;
+                conn.execute("UPDATE aliases SET active = 0 WHERE id = ?1", [id])?;
                 Ok(())
             })
             .await

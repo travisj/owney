@@ -10,7 +10,7 @@ use std::sync::Arc;
 use jmap_core::MethodError;
 use owney_api::JmapCtx;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub const CALENDAR_CAPABILITY: &str = "urn:owney:params:jmap:calendar";
 
@@ -51,11 +51,9 @@ pub struct CalendarInvitationSetArgs {
     pub invitation_id: String,
 }
 
-pub async fn calendar_get(
-    args: Value,
-    ctx: Arc<JmapCtx>,
-) -> Result<Value, MethodError> {
-    let args: GetArgs = serde_json::from_value(args).map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
+pub async fn calendar_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = serde_json::from_value(args)
+        .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
     // Get calendars for this account
@@ -84,21 +82,22 @@ pub async fn calendar_get(
     }))
 }
 
-pub async fn calendar_share(
-    args: Value,
-    ctx: Arc<JmapCtx>,
-) -> Result<Value, MethodError> {
-    let args: CalendarShareArgs = serde_json::from_value(args).map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
+pub async fn calendar_share(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: CalendarShareArgs = serde_json::from_value(args)
+        .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
-    let calendar_id = args.calendar_id.parse()
+    let calendar_id = args
+        .calendar_id
+        .parse()
         .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
 
     // Check if target is local or federated
     if args.invitee_email.contains('@') {
-        let (_, domain) = args.invitee_email.split_once('@').ok_or_else(|| {
-            MethodError::InvalidArguments("invalid invitee email".to_string())
-        })?;
+        let (_, domain) = args
+            .invitee_email
+            .split_once('@')
+            .ok_or_else(|| MethodError::InvalidArguments("invalid invitee email".to_string()))?;
 
         // Try to find local account first
         match ctx.storage.account_by_email(&args.invitee_email).await {
@@ -132,9 +131,7 @@ pub async fn calendar_share(
                             .await
                             .map_err(|e| MethodError::ServerFail(e.to_string()))?
                             .ok_or_else(|| {
-                                MethodError::InvalidArguments(
-                                    "calendar not found".to_string(),
-                                )
+                                MethodError::InvalidArguments("calendar not found".to_string())
                             })?;
 
                         let _sharing_type = match args.sharing_type.as_str() {
@@ -159,13 +156,11 @@ pub async fn calendar_share(
                         )
                         .await
                         {
-                            Ok(invitation_id) => {
-                                Ok(json!({
-                                    "invitationId": invitation_id,
-                                    "status": "pending",
-                                    "federated": true
-                                }))
-                            }
+                            Ok(invitation_id) => Ok(json!({
+                                "invitationId": invitation_id,
+                                "status": "pending",
+                                "federated": true
+                            })),
                             Err(e) => Err(MethodError::ServerFail(e.to_string())),
                         }
                     }
@@ -181,11 +176,9 @@ pub async fn calendar_share(
     }
 }
 
-pub async fn calendar_invitation_get(
-    args: Value,
-    ctx: Arc<JmapCtx>,
-) -> Result<Value, MethodError> {
-    let args: GetArgs = serde_json::from_value(args).map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
+pub async fn calendar_invitation_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: GetArgs = serde_json::from_value(args)
+        .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
     let invitations = ctx
@@ -215,12 +208,9 @@ pub async fn calendar_invitation_get(
     }))
 }
 
-pub async fn calendar_invitation_set(
-    args: Value,
-    ctx: Arc<JmapCtx>,
-) -> Result<Value, MethodError> {
-    let args: CalendarInvitationSetArgs =
-        serde_json::from_value(args).map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
+pub async fn calendar_invitation_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError> {
+    let args: CalendarInvitationSetArgs = serde_json::from_value(args)
+        .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
     match args.action.as_str() {

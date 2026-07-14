@@ -10,8 +10,8 @@
 //! The master key must be preserved separately by the operator.
 
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
 use std::io;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -48,10 +48,7 @@ pub struct BackupManifest {
 /// Create a full backup of the server.
 ///
 /// Returns the path to the created backup archive (tar.zst).
-pub async fn create_backup(
-    config: &Config,
-    output_dir: &Path,
-) -> Result<PathBuf, BackupError> {
+pub async fn create_backup(config: &Config, output_dir: &Path) -> Result<PathBuf, BackupError> {
     let data_dir = &config.storage.data_dir;
 
     // Verify master key exists
@@ -69,8 +66,8 @@ pub async fn create_backup(
     let master_key_hash = blake3::hash(&master_key_bytes);
 
     // Create temp directory for staging
-    let temp_dir = tempfile::tempdir()
-        .map_err(|e| BackupError::Other(format!("creating temp dir: {e}")))?;
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| BackupError::Other(format!("creating temp dir: {e}")))?;
     let temp_path = temp_dir.path();
 
     // Dump database schema + data
@@ -102,9 +99,8 @@ pub async fn create_backup(
         .context("reading blobs.tar size")
         .map_err(|e| BackupError::Other(e.to_string()))?
         .len();
-    let uncompressed_size = schema_sql.len() as u64
-        + blobs_tar_size
-        + master_key_hash.to_hex().len() as u64;
+    let uncompressed_size =
+        schema_sql.len() as u64 + blobs_tar_size + master_key_hash.to_hex().len() as u64;
 
     // Create manifest (archive_hash will be filled after compression)
     let mut manifest = BackupManifest {
@@ -175,8 +171,8 @@ pub async fn restore_backup(
         )));
     }
 
-    let temp_dir = tempfile::tempdir()
-        .map_err(|e| BackupError::Other(format!("creating temp dir: {e}")))?;
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| BackupError::Other(format!("creating temp dir: {e}")))?;
     let temp_path = temp_dir.path();
 
     // Decompress archive
@@ -200,10 +196,7 @@ pub async fn restore_backup(
         .context("parsing manifest.json")
         .map_err(|e| BackupError::Other(e.to_string()))?;
 
-    tracing::info!(
-        "restoring backup from version {}",
-        manifest.version
-    );
+    tracing::info!("restoring backup from version {}", manifest.version);
 
     // Restore blob store
     let blobs_tar_path = temp_path.join("blobs.tar");
@@ -290,11 +283,7 @@ async fn dump_database(db_path: &Path) -> anyhow::Result<String> {
 
 fn dump_table(conn: &rusqlite::Connection, table: &str, output: &mut String) -> anyhow::Result<()> {
     let mut stmt = conn.prepare(&format!("SELECT * FROM {}", table))?;
-    let columns: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
 
     let rows = stmt.query_map([], |row| {
         let mut values = Vec::new();
@@ -337,10 +326,7 @@ fn archive_blobs(blobs_dir: &Path, tar_path: &Path) -> anyhow::Result<()> {
     let mut tar = tar::Builder::new(tar_file);
 
     if blobs_dir.exists() {
-        for entry in WalkDir::new(blobs_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(blobs_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_file() {
                 let relative = path.strip_prefix(blobs_dir)?;
@@ -366,10 +352,7 @@ fn compress_to_zst(source_dir: &Path, output_path: &Path) -> anyhow::Result<()> 
     let encoder = zstd::Encoder::new(tar_file, 3)?;
     let mut tar = tar::Builder::new(encoder);
 
-    for entry in WalkDir::new(source_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(source_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
             let relative = path.strip_prefix(source_dir)?;
@@ -389,7 +372,6 @@ fn decompress_from_zst(archive_path: &Path, extract_dir: &Path) -> anyhow::Resul
     archive.unpack(extract_dir)?;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

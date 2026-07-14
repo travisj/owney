@@ -3,10 +3,10 @@
 //! Polls remote servers for calendar changes and syncs events locally.
 //! Uses sync tokens for incremental updates (polling-based, can upgrade to webhooks).
 
-use std::sync::Arc;
 use owney_core::{CalendarId, EventId};
 use owney_storage::Storage;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Sync job for a federated calendar
 #[derive(Debug, Clone)]
@@ -67,9 +67,13 @@ impl CalendarSyncCoordinator {
         for event in sync_response.events {
             if event.removed {
                 // Delete event if marked removed
-                let event_id = event.id.parse::<EventId>()
+                let event_id = event
+                    .id
+                    .parse::<EventId>()
                     .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
-                self.storage.delete_calendar_event(event_id).await
+                self.storage
+                    .delete_calendar_event(event_id)
+                    .await
                     .map_err(|e| SyncError::StorageError(e.to_string()))?;
                 stats.deleted += 1;
             } else {
@@ -81,9 +85,12 @@ impl CalendarSyncCoordinator {
 
         // Delete removed events (by ID list)
         for event_id_str in sync_response.removed_event_ids {
-            let event_id = event_id_str.parse::<EventId>()
+            let event_id = event_id_str
+                .parse::<EventId>()
                 .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
-            self.storage.delete_calendar_event(event_id).await
+            self.storage
+                .delete_calendar_event(event_id)
+                .await
                 .map_err(|e| SyncError::StorageError(e.to_string()))?;
             stats.deleted += 1;
         }
@@ -104,7 +111,9 @@ impl CalendarSyncCoordinator {
         event: RemoteCalendarEvent,
     ) -> Result<(), SyncError> {
         // Check if event exists
-        let event_id = event.id.parse::<EventId>()
+        let event_id = event
+            .id
+            .parse::<EventId>()
             .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
 
         match self.storage.get_calendar_event(event_id).await {
@@ -143,7 +152,10 @@ impl CalendarSyncCoordinator {
     }
 
     /// Fetch calendar changes from remote server
-    async fn fetch_remote_changes(&self, job: &FederationSyncJob) -> Result<CalendarSyncResponse, SyncError> {
+    async fn fetch_remote_changes(
+        &self,
+        job: &FederationSyncJob,
+    ) -> Result<CalendarSyncResponse, SyncError> {
         let mut url = format!(
             "{0}/.well-known/owney/calendar/sync/{1}",
             job.target_server_url, job.federation_id
@@ -177,7 +189,8 @@ impl CalendarSyncCoordinator {
 
     /// List all federation sync jobs that need attention
     pub async fn list_sync_jobs(&self) -> Result<Vec<FederationSyncJob>, SyncError> {
-        let federations = self.storage
+        let federations = self
+            .storage
             .list_active_federations()
             .await
             .map_err(|e| SyncError::StorageError(e.to_string()))?;
