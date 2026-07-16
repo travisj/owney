@@ -1,5 +1,6 @@
-//! Persistence for the AI layer: annotations, the auditable action log with
-//! inverse patches, and the enrichment cursor.
+//! Persistence for the AI layer: the auditable action log with inverse
+//! patches and the enrichment cursor. Per-email enrichment output lives in
+//! `email_attributes` (see `attributes.rs`).
 
 use owney_core::{AccountId, EmailId};
 use rusqlite::{OptionalExtension, params};
@@ -20,51 +21,6 @@ pub struct AiAction {
 }
 
 impl Storage {
-    pub async fn insert_annotation(
-        &self,
-        account_id: AccountId,
-        email_id: EmailId,
-        kind: &str,
-        content: &str,
-    ) -> Result<(), StorageError> {
-        let (kind, content) = (kind.to_owned(), content.to_owned());
-        self.db
-            .call(move |conn| {
-                conn.execute(
-                    "INSERT INTO ai_annotations (id, account_id, email_id, kind, content, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        Uuid::now_v7().to_string(),
-                        account_id.to_string(),
-                        email_id.to_string(),
-                        kind,
-                        content,
-                        unix_now(),
-                    ],
-                )?;
-                Ok(())
-            })
-            .await
-    }
-
-    pub async fn annotations(
-        &self,
-        email_id: EmailId,
-    ) -> Result<Vec<(String, String)>, StorageError> {
-        self.db
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT kind, content FROM ai_annotations WHERE email_id = ?1
-                     ORDER BY created_at",
-                )?;
-                let rows = stmt
-                    .query_map([email_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(rows)
-            })
-            .await
-    }
-
     /// Record an AI action; returns its id for the activity feed.
     pub async fn record_ai_action(
         &self,

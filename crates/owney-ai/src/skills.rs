@@ -17,6 +17,8 @@ pub struct EmailContext {
     pub body_text: String,
     pub list_unsubscribe: Option<String>,
     pub list_unsubscribe_post: bool,
+    /// Bodies of `text/calendar` / `.ics` MIME parts, in message order.
+    pub calendar_parts: Vec<String>,
 }
 
 impl EmailContext {
@@ -38,6 +40,7 @@ impl EmailContext {
         let mut body_text = String::new();
         let mut list_unsubscribe = None;
         let mut list_unsubscribe_post = false;
+        let mut calendar_parts = Vec::new();
         if let Some(message) = mail_parser::MessageParser::default().parse(&raw) {
             body_text = message.body_text(0).unwrap_or_default().into_owned();
             // mail-parser models List-Unsubscribe's <target> list as addresses.
@@ -60,6 +63,19 @@ impl EmailContext {
                 .header("List-Unsubscribe-Post")
                 .and_then(|h| h.as_text())
                 .is_some_and(|v| v.to_lowercase().contains("one-click"));
+            for part in &message.parts {
+                if !is_calendar_part(part) {
+                    continue;
+                }
+                match &part.body {
+                    mail_parser::PartType::Text(text) => calendar_parts.push(text.to_string()),
+                    mail_parser::PartType::Binary(bytes)
+                    | mail_parser::PartType::InlineBinary(bytes) => {
+                        calendar_parts.push(String::from_utf8_lossy(bytes).into_owned());
+                    }
+                    _ => {}
+                }
+            }
         }
 
         Ok(Some(Self {
@@ -68,8 +84,25 @@ impl EmailContext {
             body_text,
             list_unsubscribe,
             list_unsubscribe_post,
+            calendar_parts,
         }))
     }
+}
+
+/// `text/calendar`, `application/ics`, or an attachment named `*.ics`.
+fn is_calendar_part(part: &mail_parser::MessagePart<'_>) -> bool {
+    use mail_parser::MimeHeaders;
+    if let Some(ct) = part.content_type() {
+        let ctype = ct.ctype();
+        let subtype = ct.subtype().unwrap_or("");
+        if (ctype.eq_ignore_ascii_case("text") && subtype.eq_ignore_ascii_case("calendar"))
+            || (ctype.eq_ignore_ascii_case("application") && subtype.eq_ignore_ascii_case("ics"))
+        {
+            return true;
+        }
+    }
+    part.attachment_name()
+        .is_some_and(|name| name.to_ascii_lowercase().ends_with(".ics"))
 }
 
 /// HEY-style screener: a first-time sender's mail goes to the Screener
@@ -147,11 +180,37 @@ pub async fn detect_unsubscribe(
         "oneClick": ctx.list_unsubscribe_post && http_url.is_some(),
     });
     storage
-        .insert_annotation(
+        .set_email_attribute(
             account_id,
             ctx.email_id,
             "unsubscribe",
             &content.to_string(),
+        )
+        .await?;
+    Ok(true)
+}
+
+/// Deterministic calendar-invite detection: the first VEVENT found in a
+/// `text/calendar` part becomes a `calendarInvite` attribute. Detection
+/// only — no calendar event is created.
+pub async fn detect_calendar_invite(
+    storage: &Storage,
+    account_id: AccountId,
+    ctx: &EmailContext,
+) -> Result<bool, AiError> {
+    let Some(invite) = ctx
+        .calendar_parts
+        .iter()
+        .find_map(|part| crate::ics::parse_invite(part))
+    else {
+        return Ok(false);
+    };
+    storage
+        .set_email_attribute(
+            account_id,
+            ctx.email_id,
+            "calendarInvite",
+            &invite.to_string(),
         )
         .await?;
     Ok(true)
@@ -257,7 +316,7 @@ pub async fn summarize(
         return Err(AiError::Provider(format!("no summary in {answer}")));
     }
     storage
-        .insert_annotation(account_id, ctx.email_id, "summary", &answer.to_string())
+        .set_email_attribute(account_id, ctx.email_id, "summary", &answer.to_string())
         .await?;
     storage
         .record_ai_action(

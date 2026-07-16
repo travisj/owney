@@ -31,7 +31,7 @@ pub fn tools() -> Value {
         ),
         tool(
             "get_email",
-            "Fetch one email's full body, keywords, and AI annotations.",
+            "Fetch one email's full body, keywords, and server attributes.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]})
         ),
         tool(
@@ -64,7 +64,7 @@ pub fn tools() -> Value {
         ),
         tool(
             "summarize_thread",
-            "Summarize a thread from its stored AI annotations.",
+            "Summarize a thread from its stored server attributes.",
             json!({"type": "object", "properties": {"threadId": {"type": "string"}}, "required": ["threadId"]})
         ),
         // create_draft is non-destructive (creates a new row).

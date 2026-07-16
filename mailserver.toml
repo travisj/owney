@@ -37,8 +37,11 @@ listen = "127.0.0.1:8380"
 public_url = ""
 
 [ai]
-# The AI layer. Screening and unsubscribe detection are deterministic and
-# always available; categorization and summaries need a provider.
+# The AI layer. Screening, unsubscribe detection, and calendar-invite
+# detection are deterministic; categorization and summaries need a provider.
+# With enabled = false, metadata-only detectors (unsubscribe, calendar
+# invite) still run — they never move mail or call a model. The screener
+# and all model-backed skills are off.
 enabled = true
 # "claude" (default; reads the key from api_key_env), "openai-compat"
 # (Ollama/vLLM at base_url), or "none".

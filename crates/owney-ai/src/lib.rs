@@ -8,6 +8,7 @@
 //! 3. Fail open: an AI error never loses or blocks mail; it just means less
 //!    enrichment.
 
+pub mod ics;
 pub mod nl_search;
 pub mod provider;
 pub mod skills;

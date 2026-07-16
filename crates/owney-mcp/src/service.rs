@@ -103,7 +103,10 @@ impl McpCtx {
             .parse(&raw)
             .and_then(|m| m.body_text(0).map(|b| b.into_owned()))
             .unwrap_or_default();
-        let annotations = self.storage.annotations(email_id).await?;
+        let attributes = self
+            .storage
+            .list_email_attributes(self.account_id, email_id)
+            .await?;
 
         Ok(json!({
             "id": row.id,
@@ -114,8 +117,13 @@ impl McpCtx {
             "mailboxIds": row.mailbox_ids,
             "receivedAt": owney_core::time::iso8601_utc(row.received_at),
             "body": body,
-            "aiAnnotations": annotations.iter().map(|(kind, content)| {
-                json!({"kind": kind, "content": serde_json::from_str::<Value>(content).unwrap_or_else(|_| json!(content))})
+            "serverAttributes": attributes.iter().map(|attr| {
+                json!({
+                    "kind": attr.kind,
+                    "content": serde_json::from_str::<Value>(&attr.content)
+                        .unwrap_or_else(|_| json!(attr.content)),
+                    "dismissed": attr.dismissed_at.is_some(),
+                })
             }).collect::<Vec<_>>(),
         }))
     }
@@ -215,7 +223,7 @@ impl McpCtx {
         let thread = self.get_thread(thread_id).await?;
         Ok(json!({
             "threadId": thread_id,
-            "note": "per-message AI summaries appear in get_email.aiAnnotations",
+            "note": "per-message AI summaries appear in get_email.serverAttributes",
             "emails": thread["emails"],
         }))
     }

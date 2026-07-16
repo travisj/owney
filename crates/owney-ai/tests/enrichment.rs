@@ -174,21 +174,112 @@ async fn long_message_gets_summary_and_unsubscribe_is_detected() {
         .expect("list");
     let email_id = screener[0].id; // first contact → screener, fine
 
-    let annotations = h.storage.annotations(email_id).await.expect("annotations");
-    let summary = annotations
+    let attributes = h
+        .storage
+        .list_email_attributes(h.account_id, email_id)
+        .await
+        .expect("attributes");
+    let summary = attributes
         .iter()
-        .find(|(kind, _)| kind == "summary")
+        .find(|attr| attr.kind == "summary")
         .expect("summary");
-    assert!(summary.1.contains("Rust"), "{}", summary.1);
+    assert!(summary.content.contains("Rust"), "{}", summary.content);
 
-    let unsub = annotations
+    let unsub = attributes
         .iter()
-        .find(|(kind, _)| kind == "unsubscribe")
-        .expect("unsubscribe annotation");
-    let unsub: serde_json::Value = serde_json::from_str(&unsub.1).expect("json");
+        .find(|attr| attr.kind == "unsubscribe")
+        .expect("unsubscribe attribute");
+    let unsub: serde_json::Value = serde_json::from_str(&unsub.content).expect("json");
     assert_eq!(unsub["http"], "https://list.test/unsub?u=1");
     assert_eq!(unsub["mailto"], "unsub@list.test");
     assert_eq!(unsub["oneClick"], true, "RFC 8058 one-click detected");
+}
+
+#[tokio::test]
+async fn calendar_invite_in_mime_part_is_detected() {
+    let h = harness().await;
+    h.provider.queue(json!({"category": "personal"}));
+
+    let raw = "From: <bob@example.com>\r\n\
+               To: alice@example.com\r\n\
+               Subject: Team sync\r\n\
+               Message-ID: <invite-1@example.com>\r\n\
+               MIME-Version: 1.0\r\n\
+               Content-Type: multipart/mixed; boundary=\"BB\"\r\n\
+               \r\n\
+               --BB\r\n\
+               Content-Type: text/plain\r\n\
+               \r\n\
+               Join me for a sync.\r\n\
+               --BB\r\n\
+               Content-Type: text/calendar; method=REQUEST; charset=UTF-8\r\n\
+               \r\n\
+               BEGIN:VCALENDAR\r\n\
+               METHOD:REQUEST\r\n\
+               BEGIN:VEVENT\r\n\
+               UID:invite-1@cal.example.com\r\n\
+               SUMMARY:Team sync\r\n  (quarterly)\r\n\
+               ORGANIZER:mailto:bob@example.com\r\n\
+               DTSTART:20260720T150000Z\r\n\
+               DTEND:20260720T160000Z\r\n\
+               END:VEVENT\r\n\
+               END:VCALENDAR\r\n\
+               --BB--\r\n";
+    h.storage
+        .ingest_email(h.account_id, raw.as_bytes().to_vec(), "inbox", None)
+        .await
+        .expect("ingest");
+    run(&h).await;
+
+    let screener = h
+        .storage
+        .list_mailbox(h.account_id, "screener", 10)
+        .await
+        .expect("list");
+    let email_id = screener[0].id; // first contact → screener
+
+    let attributes = h
+        .storage
+        .list_email_attributes(h.account_id, email_id)
+        .await
+        .expect("attributes");
+    let invite = attributes
+        .iter()
+        .find(|attr| attr.kind == "calendarInvite")
+        .expect("calendarInvite attribute");
+    let invite: serde_json::Value = serde_json::from_str(&invite.content).expect("json");
+    assert_eq!(invite["method"], "REQUEST");
+    assert_eq!(invite["uid"], "invite-1@cal.example.com");
+    assert_eq!(
+        invite["summary"], "Team sync (quarterly)",
+        "folded line unfolds"
+    );
+    assert_eq!(invite["organizer"], "mailto:bob@example.com");
+    assert_eq!(invite["startAt"], 1_784_559_600);
+    assert_eq!(invite["endAt"], 1_784_563_200);
+}
+
+#[tokio::test]
+async fn plain_message_gets_no_calendar_invite() {
+    let h = harness().await;
+    h.provider.queue(json!({"category": "personal"}));
+    ingest(&h, "bob@example.com", "no ics here", "just text", "").await;
+    run(&h).await;
+
+    let screener = h
+        .storage
+        .list_mailbox(h.account_id, "screener", 10)
+        .await
+        .expect("list");
+    let attributes = h
+        .storage
+        .list_email_attributes(h.account_id, screener[0].id)
+        .await
+        .expect("attributes");
+    assert!(
+        !attributes.iter().any(|attr| attr.kind == "calendarInvite"),
+        "{attributes:?}"
+    );
 }
 
 #[tokio::test]

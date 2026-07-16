@@ -16,6 +16,7 @@ pub struct AiConfig {
     pub categorizer: bool,
     pub summarizer: bool,
     pub unsubscribe: bool,
+    pub calendar_invite: bool,
     /// Body prefix sent to the model.
     pub max_body_chars: usize,
     /// Minimum body length before a summary is worth it.
@@ -29,8 +30,23 @@ impl Default for AiConfig {
             categorizer: true,
             summarizer: true,
             unsubscribe: true,
+            calendar_invite: true,
             max_body_chars: 4_000,
             summarize_min_chars: 800,
+        }
+    }
+}
+
+impl AiConfig {
+    /// Metadata-only enrichment: the deterministic detectors that never move
+    /// mail or call a model. Used when AI is disabled — server attributes
+    /// (unsubscribe, calendar invites) still get produced.
+    pub fn deterministic_only() -> Self {
+        Self {
+            screener: false,
+            categorizer: false,
+            summarizer: false,
+            ..Self::default()
         }
     }
 }
@@ -77,6 +93,11 @@ pub async fn process_new_mail(
             && let Err(err) = skills::detect_unsubscribe(storage, account_id, &ctx).await
         {
             tracing::warn!(%err, email = %email_id, "unsubscribe detection failed");
+        }
+        if config.calendar_invite
+            && let Err(err) = skills::detect_calendar_invite(storage, account_id, &ctx).await
+        {
+            tracing::warn!(%err, email = %email_id, "calendar-invite detection failed");
         }
 
         // Model-backed skills run when a provider exists; fail open.
