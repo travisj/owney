@@ -8,7 +8,8 @@ use openpgp::Cert;
 use openpgp::KeyHandle;
 use openpgp::parse::Parse;
 use openpgp::parse::stream::{
-    DecryptionHelper, DecryptorBuilder, MessageLayer, MessageStructure, VerificationHelper,
+    DecryptionHelper, DecryptorBuilder, DetachedVerifierBuilder, MessageLayer, MessageStructure,
+    VerificationHelper,
 };
 use openpgp::serialize::stream::{Armorer, Encryptor, LiteralWriter, Message, Signer};
 
@@ -114,10 +115,114 @@ pub fn decrypt_and_verify(
     })
 }
 
+/// Produce a binary **detached** signature over `msg` with the signer's key.
+/// Used to authenticate federation HTTP requests: the signature covers a
+/// canonical request string with no encryption.
+pub fn sign_detached(signer: &Cert, msg: &[u8]) -> Result<Vec<u8>, PgpError> {
+    let policy = policy();
+    let keypair = signer
+        .with_policy(&policy, None)
+        .map_err(PgpError::from)?
+        .keys()
+        .secret()
+        .for_signing()
+        .next()
+        .ok_or_else(|| PgpError::OpenPgp("signer has no secret signing key".into()))?
+        .key()
+        .clone()
+        .into_keypair()
+        .map_err(PgpError::from)?;
+
+    let mut out = Vec::new();
+    let message = Message::new(&mut out);
+    let mut signer = Signer::new(message, keypair)
+        .map_err(PgpError::from)?
+        .detached()
+        .build()
+        .map_err(PgpError::from)?;
+    signer
+        .write_all(msg)
+        .map_err(|err| PgpError::OpenPgp(err.to_string()))?;
+    signer.finalize().map_err(PgpError::from)?;
+    Ok(out)
+}
+
+/// Verify a detached `sig` over `msg` against `signer_pub`. Returns `true` only
+/// for a cryptographically valid signature by that cert under our policy.
+pub fn verify_detached(signer_pub: &Cert, msg: &[u8], sig: &[u8]) -> Result<bool, PgpError> {
+    let policy = policy();
+    let helper = DetachedHelper {
+        signer: signer_pub,
+        valid: false,
+    };
+    let mut verifier = DetachedVerifierBuilder::from_bytes(sig)
+        .map_err(PgpError::from)?
+        .with_policy(&policy, None, helper)
+        .map_err(PgpError::from)?;
+    // `verify_bytes` drives the helper's `check`; a bad/absent signature is
+    // recorded there rather than erroring, so read the flag afterwards.
+    verifier.verify_bytes(msg).map_err(PgpError::from)?;
+    Ok(verifier.into_helper().valid)
+}
+
+/// Seal a federated event: sign with the authoring account's key and encrypt to
+/// the receiving server's cert. Thin wrapper over [`encrypt_and_sign`].
+pub fn seal_event(
+    author_secret: &Cert,
+    receiving_server_pub: &Cert,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, PgpError> {
+    encrypt_and_sign(author_secret, &[receiving_server_pub], plaintext)
+}
+
+/// Open a sealed event: decrypt with the server's secret cert and require a
+/// **valid** signature from the claimed author. Rejects (rather than storing)
+/// anything whose author signature does not verify — the crucial check that
+/// [`decrypt_and_verify`] deliberately leaves to the caller.
+pub fn open_event(
+    server_secret: &Cert,
+    author_pub: &Cert,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, PgpError> {
+    let outcome = decrypt_and_verify(server_secret, Some(author_pub), ciphertext)?;
+    if outcome.signature != "valid" {
+        return Err(PgpError::OpenPgp(format!(
+            "federated event signature not valid: {}",
+            outcome.signature
+        )));
+    }
+    Ok(outcome.plaintext)
+}
+
 struct Helper<'a> {
     own: &'a Cert,
     sender: Option<&'a Cert>,
     signature: &'static str,
+}
+
+struct DetachedHelper<'a> {
+    signer: &'a Cert,
+    valid: bool,
+}
+
+impl VerificationHelper for DetachedHelper<'_> {
+    fn get_certs(&mut self, _ids: &[KeyHandle]) -> openpgp::Result<Vec<Cert>> {
+        Ok(vec![self.signer.clone()])
+    }
+
+    fn check(&mut self, structure: MessageStructure<'_>) -> openpgp::Result<()> {
+        for layer in structure.into_iter() {
+            if let MessageLayer::SignatureGroup { results } = layer {
+                for result in results {
+                    if result.is_ok() {
+                        self.valid = true;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl VerificationHelper for Helper<'_> {
@@ -223,5 +328,52 @@ mod tests {
 
         let ciphertext = encrypt_and_sign(&alice, &[&bob], b"secret").expect("encrypt");
         assert!(decrypt_and_verify(&eve, None, &ciphertext).is_err());
+    }
+
+    #[test]
+    fn detached_signature_round_trip() {
+        let server = generate_cert("federation@a.test", Some("a.test")).expect("server");
+        let msg = b"GET\n/.well-known/owney/calendar/sync/abc\na.test\n1700000000\nnonce123\n";
+
+        let sig = sign_detached(&server, msg).expect("sign");
+        let server_pub = server.clone().strip_secret_key_material();
+        assert!(verify_detached(&server_pub, msg, &sig).expect("verify"));
+    }
+
+    #[test]
+    fn detached_verify_rejects_tampered_message_and_wrong_key() {
+        let server = generate_cert("federation@a.test", None).expect("server");
+        let other = generate_cert("federation@evil.test", None).expect("other");
+        let msg = b"canonical-request-bytes";
+
+        let sig = sign_detached(&server, msg).expect("sign");
+        let server_pub = server.clone().strip_secret_key_material();
+
+        // Tampered message: must not verify.
+        assert!(!verify_detached(&server_pub, b"canonical-request-byteX", &sig).expect("tamper"));
+        // Signed by a different key than claimed: must not verify.
+        let other_pub = other.strip_secret_key_material();
+        assert!(!verify_detached(&other_pub, msg, &sig).expect("wrong key"));
+    }
+
+    #[test]
+    fn open_event_rejects_unsigned_or_wrong_author() {
+        // Author A signs + encrypts an event to server B.
+        let author = generate_cert("alice@a.test", Some("Alice")).expect("author");
+        let server_b = generate_cert("federation@b.test", Some("b.test")).expect("server b");
+
+        let sealed = seal_event(&author, &server_b, b"{\"title\":\"Standup\"}").expect("seal");
+
+        // B opens it, verifying A's signature.
+        let author_pub = author.clone().strip_secret_key_material();
+        let plaintext = open_event(&server_b, &author_pub, &sealed).expect("open");
+        assert_eq!(plaintext, b"{\"title\":\"Standup\"}");
+
+        // If B is handed the WRONG author cert, the signature is not "valid" and
+        // open_event must reject rather than store.
+        let impostor = generate_cert("mallory@evil.test", None)
+            .expect("impostor")
+            .strip_secret_key_material();
+        assert!(open_event(&server_b, &impostor, &sealed).is_err());
     }
 }

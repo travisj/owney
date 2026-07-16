@@ -89,6 +89,36 @@ pub async fn own_cert(storage: &Storage, account_id: AccountId) -> Result<Cert, 
     Ok(cert)
 }
 
+/// Load this server's federation identity cert (with secrets), generating and
+/// persisting one on first use. Unlike [`own_cert`], this is not tied to an
+/// account row — it is a singleton server identity `federation@<domain>` whose
+/// secret TSK lives in the (master-key-encrypted) blob store. Its public form
+/// is published at `/.well-known/owney/server` so peers can encrypt events to
+/// this server and verify its request signatures.
+pub async fn server_cert(storage: &Storage, domain: &str) -> Result<Cert, PgpError> {
+    if let Some((_fingerprint, blob_id)) = storage.server_identity().await? {
+        let tsk_bytes = storage.get_blob(blob_id).await?;
+        let cert = Cert::from_bytes(&tsk_bytes).map_err(PgpError::from)?;
+        return Ok(cert);
+    }
+
+    let email = format!("federation@{domain}");
+    let label = format!("{domain} federation");
+    let cert = generate_cert(&email, Some(&label))?;
+
+    let tsk_bytes = cert.as_tsk().to_vec().map_err(PgpError::from)?;
+    let blob_id = storage.put_blob(tsk_bytes).await?;
+    storage
+        .set_server_identity(&cert.fingerprint().to_hex(), blob_id)
+        .await?;
+    tracing::info!(
+        %domain,
+        fingerprint = %cert.fingerprint(),
+        "generated server federation identity"
+    );
+    Ok(cert)
+}
+
 /// Public-only armored form, for WKD and Autocrypt publication.
 pub fn public_armored(cert: &Cert) -> Result<String, PgpError> {
     use openpgp::armor::{Kind, Writer};
@@ -146,6 +176,29 @@ mod tests {
             "stable across reloads"
         );
         assert!(second.is_tsk(), "secrets survive the round trip");
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn server_cert_persists_and_reloads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage = Storage::open(dir.path(), EventBus::new(8)).expect("open");
+
+        let first = server_cert(&storage, "a.test").await.expect("generate");
+        let second = server_cert(&storage, "a.test").await.expect("reload");
+        assert_eq!(
+            first.fingerprint(),
+            second.fingerprint(),
+            "stable across reloads"
+        );
+        assert!(second.is_tsk(), "secrets survive the round trip");
+        // The identity is a server pseudo-identity, not an account.
+        let userid = first
+            .userids()
+            .next()
+            .map(|u| u.userid().to_string())
+            .unwrap_or_default();
+        assert!(userid.contains("federation@a.test"), "{userid}");
         storage.close();
     }
 }

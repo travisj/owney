@@ -56,14 +56,14 @@ pub async fn calendar_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Metho
         .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
-    // Get calendars for this account
-    let calendars = ctx
+    // Calendars this account owns.
+    let owned = ctx
         .storage
         .list_calendars(ctx.account.id)
         .await
-        .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+        .map_err(storage_err)?;
 
-    let calendar_values: Vec<Value> = calendars
+    let mut calendar_values: Vec<Value> = owned
         .into_iter()
         .map(|c| {
             json!({
@@ -71,9 +71,40 @@ pub async fn calendar_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Metho
                 "name": c.name,
                 "description": c.description,
                 "isSubscribed": true,
+                "myRights": owner_rights(),
             })
         })
         .collect();
+
+    // Calendars shared with this account. Only *accepted* shares appear, and
+    // only when the share actually grants view access — this is where the
+    // stored permission bits become load-bearing.
+    let shared = ctx
+        .storage
+        .list_accepted_shared_calendar_ids(ctx.account.id)
+        .await
+        .map_err(storage_err)?;
+
+    for (calendar_id, perms) in shared {
+        if !perms.view_calendar {
+            continue;
+        }
+        // The shared calendar is owned by another account, so fetch it by id.
+        if let Some(c) = ctx
+            .storage
+            .get_calendar_by_id(calendar_id)
+            .await
+            .map_err(storage_err)?
+        {
+            calendar_values.push(json!({
+                "id": c.id.to_string(),
+                "name": c.name,
+                "description": c.description,
+                "isSubscribed": true,
+                "myRights": rights_json(&perms),
+            }));
+        }
+    }
 
     Ok(json!({
         "accountId": args.account_id,
@@ -91,6 +122,18 @@ pub async fn calendar_share(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Met
         .calendar_id
         .parse()
         .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
+
+    // Authorization: only the calendar's owner may share it. Verify ownership
+    // up front so it covers both the local and federated paths below.
+    if ctx
+        .storage
+        .get_calendar(ctx.account.id, calendar_id)
+        .await
+        .map_err(storage_err)?
+        .is_none()
+    {
+        return Err(MethodError::Forbidden);
+    }
 
     // Check if target is local or federated
     if args.invitee_email.contains('@') {
@@ -112,7 +155,7 @@ pub async fn calendar_share(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Met
                     .storage
                     .share_calendar(calendar_id, ctx.account.id, target_account.id, sharing_type)
                     .await
-                    .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+                    .map_err(storage_err)?;
 
                 Ok(json!({
                     "invitationId": sharing.id,
@@ -121,51 +164,80 @@ pub async fn calendar_share(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Met
                 }))
             }
             Ok(None) => {
-                // Federated sharing - need to discover target server
-                match owney_api::federation::ServerDiscovery::discover(domain).await {
-                    Ok(server_metadata) => {
-                        // Create federation invitation
-                        let get_calendar = ctx
-                            .storage
-                            .get_calendar(ctx.account.id, calendar_id)
-                            .await
-                            .map_err(|e| MethodError::ServerFail(e.to_string()))?
-                            .ok_or_else(|| {
-                                MethodError::InvalidArguments("calendar not found".to_string())
-                            })?;
+                // Federated sharing: discover + pin the target server, create an
+                // outbound federation (minting the capability), and deliver a
+                // signed invitation.
+                let calendar = ctx
+                    .storage
+                    .get_calendar(ctx.account.id, calendar_id)
+                    .await
+                    .map_err(storage_err)?
+                    .ok_or_else(|| {
+                        MethodError::InvalidArguments("calendar not found".to_string())
+                    })?;
 
-                        let _sharing_type = match args.sharing_type.as_str() {
-                            "delegation" => owney_storage::SharingType::Delegation,
-                            _ => owney_storage::SharingType::Sharing,
-                        };
+                let sharing_type = match args.sharing_type.as_str() {
+                    "delegation" => owney_storage::SharingType::Delegation,
+                    _ => owney_storage::SharingType::Sharing,
+                };
 
-                        let invitation = owney_api::federation::FederationInvitation {
-                            calendar_id: calendar_id.to_string(),
-                            calendar_name: get_calendar.name,
-                            inviter_email: ctx.account.email.clone(),
-                            inviter_account_id: ctx.account.id.to_string(),
-                            inviter_server_url: "https://example.com".to_string(), // Should be configured
-                            target_email: args.invitee_email,
-                            sharing_type: args.sharing_type,
-                            created_at: unix_now(),
-                        };
+                let client = owney_api::federation::build_client(
+                    &ctx.storage,
+                    &ctx.public_url,
+                    &ctx.federation,
+                )
+                .await
+                .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+                let peer = owney_api::federation::discover_and_pin(
+                    &ctx.storage,
+                    &client,
+                    domain,
+                    &ctx.federation,
+                )
+                .await
+                .map_err(|e| MethodError::ServerFail(e.to_string()))?;
 
-                        match owney_api::federation::ServerDiscovery::send_invitation(
-                            &server_metadata.server_url,
-                            &invitation,
-                        )
-                        .await
-                        {
-                            Ok(invitation_id) => Ok(json!({
-                                "invitationId": invitation_id,
-                                "status": "pending",
-                                "federated": true
-                            })),
-                            Err(e) => Err(MethodError::ServerFail(e.to_string())),
-                        }
-                    }
-                    Err(e) => Err(MethodError::ServerFail(e.to_string())),
+                let (federation_id, capability_secret) = ctx
+                    .storage
+                    .create_outbound_federation(
+                        calendar_id,
+                        &args.invitee_email,
+                        &peer.server_url,
+                        sharing_type,
+                        &peer.domain,
+                        &peer.fingerprint,
+                    )
+                    .await
+                    .map_err(storage_err)?;
+
+                let invitation = owney_api::federation::FederationInvitation {
+                    federation_id: federation_id.clone(),
+                    capability_secret,
+                    calendar_name: calendar.name,
+                    inviter_email: ctx.account.email.clone(),
+                    target_email: args.invitee_email.clone(),
+                    sharing_type: args.sharing_type.clone(),
+                    created_at: unix_now(),
+                };
+                let body = serde_json::to_vec(&invitation)
+                    .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+                let invite_url = format!("{}/.well-known/owney/calendar/invite", peer.server_url);
+                let resp = client
+                    .post_json(&invite_url, &peer.domain, &body)
+                    .await
+                    .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+                if !resp.status().is_success() {
+                    return Err(MethodError::ServerFail(format!(
+                        "peer rejected invitation: {}",
+                        resp.status()
+                    )));
                 }
+
+                Ok(json!({
+                    "invitationId": federation_id,
+                    "status": "pending",
+                    "federated": true
+                }))
             }
             Err(e) => Err(MethodError::ServerFail(e.to_string())),
         }
@@ -181,22 +253,24 @@ pub async fn calendar_invitation_get(args: Value, ctx: Arc<JmapCtx>) -> Result<V
         .map_err(|_| MethodError::InvalidArguments("invalid arguments".to_string()))?;
     let _account_id = check_account(&ctx, &args.account_id)?;
 
+    // Pending federated invitations are represented as pending inbound
+    // federations addressed to this account (the mirror-calendar owner).
     let invitations = ctx
         .storage
-        .get_pending_invitations(ctx.account.id)
+        .list_pending_inbound_federations(ctx.account.id)
         .await
-        .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+        .map_err(storage_err)?;
 
     let invitation_values: Vec<Value> = invitations
         .into_iter()
-        .map(|inv| {
+        .map(|fed| {
             json!({
-                "id": inv.id,
-                "calendarId": inv.calendar_id.to_string(),
-                "inviterAccountId": inv.inviter_account_id.to_string(),
-                "sharingType": inv.sharing_type.as_str(),
-                "status": inv.status,
-                "createdAt": inv.created_at,
+                "id": fed.id,
+                "calendarId": fed.calendar_id.to_string(),
+                "inviterEmail": fed.target_email,
+                "sharingType": fed.sharing_type.as_str(),
+                "status": fed.status,
+                "createdAt": fed.created_at,
             })
         })
         .collect();
@@ -215,10 +289,13 @@ pub async fn calendar_invitation_set(args: Value, ctx: Arc<JmapCtx>) -> Result<V
 
     match args.action.as_str() {
         "accept" => {
+            // Accepting flips the pending inbound federation to accepted; the
+            // sync worker then begins pulling. Scoped to the mirror-calendar
+            // owner, so one account cannot accept another's invitation.
             ctx.storage
-                .accept_federation_invitation(&args.invitation_id)
+                .accept_inbound_federation(&args.invitation_id, ctx.account.id)
                 .await
-                .map_err(|e| MethodError::ServerFail(e.to_string()))?;
+                .map_err(storage_err)?;
 
             Ok(json!({
                 "invitationId": args.invitation_id,
@@ -226,7 +303,11 @@ pub async fn calendar_invitation_set(args: Value, ctx: Arc<JmapCtx>) -> Result<V
             }))
         }
         "reject" => {
-            // TODO: Add reject method to storage
+            ctx.storage
+                .reject_inbound_federation(&args.invitation_id, ctx.account.id)
+                .await
+                .map_err(storage_err)?;
+
             Ok(json!({
                 "invitationId": args.invitation_id,
                 "status": "rejected"
@@ -246,9 +327,174 @@ fn check_account(ctx: &JmapCtx, account_id: &str) -> Result<owney_core::AccountI
     Ok(ctx.account.id)
 }
 
+/// Map a storage error to a method error, preserving the authorization
+/// boundary: a `NotAuthorized` storage failure becomes `Forbidden`, not a
+/// generic server failure.
+fn storage_err(e: owney_storage::StorageError) -> MethodError {
+    match e {
+        owney_storage::StorageError::NotAuthorized => MethodError::Forbidden,
+        other => MethodError::ServerFail(other.to_string()),
+    }
+}
+
+/// JMAP `myRights` object for a calendar the account owns.
+fn owner_rights() -> Value {
+    rights_json(&owney_storage::Permissions::owner())
+}
+
+/// JMAP `myRights` object derived from a [`Permissions`] grant.
+fn rights_json(perms: &owney_storage::Permissions) -> Value {
+    json!({
+        "mayReadItems": perms.view_events,
+        "mayWriteItems": perms.edit_events,
+        "mayDeleteItems": perms.delete_events,
+        "mayAdmin": perms.admin,
+        "mayShare": perms.change_sharing,
+    })
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use owney_storage::{Account, Storage};
+    use std::sync::Arc;
+
+    async fn setup() -> (tempfile::TempDir, Arc<Storage>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let events = owney_events::EventBus::new(64);
+        let storage = Storage::open(dir.path(), events).expect("open storage");
+        (dir, Arc::new(storage))
+    }
+
+    fn ctx_for(storage: &Arc<Storage>, account: Account) -> Arc<JmapCtx> {
+        Arc::new(JmapCtx {
+            account,
+            storage: storage.clone(),
+            submitter: None,
+            public_url: "https://test.local".to_string(),
+            federation: Default::default(),
+        })
+    }
+
+    fn share_args(account: &Account, calendar_id: &str, invitee: &str, ty: &str) -> Value {
+        json!({
+            "accountId": account.id.to_string(),
+            "calendarId": calendar_id,
+            "inviteeEmail": invitee,
+            "sharingType": ty,
+        })
+    }
+
+    #[tokio::test]
+    async fn owner_can_share_but_non_owner_is_forbidden() {
+        let (_dir, storage) = setup().await;
+
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
+        let mallory = storage
+            .create_account("mallory@example.com", None)
+            .await
+            .expect("mallory");
+
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
+        let cal_id = calendar.id.to_string();
+
+        // Owner (alice) shares her calendar with local account bob: succeeds.
+        let ok = calendar_share(
+            share_args(&alice, &cal_id, "bob@example.com", "sharing"),
+            ctx_for(&storage, alice.clone()),
+        )
+        .await
+        .expect("owner share ok");
+        assert_eq!(ok["status"], "pending");
+
+        // Non-owner (mallory), authenticated as herself, tries to share alice's
+        // calendar. Must be rejected at the authorization boundary.
+        let err = calendar_share(
+            share_args(&mallory, &cal_id, "mallory@example.com", "delegation"),
+            ctx_for(&storage, mallory.clone()),
+        )
+        .await
+        .expect_err("non-owner share must fail");
+        assert!(matches!(err, MethodError::Forbidden));
+
+        // And mallory truly gained nothing.
+        assert!(
+            storage
+                .calendar_access(mallory.id, calendar.id)
+                .await
+                .expect("access")
+                .is_none()
+        );
+
+        let _ = bob;
+    }
+
+    #[tokio::test]
+    async fn calendar_get_shows_accepted_shares_not_pending() {
+        let (_dir, storage) = setup().await;
+
+        let alice = storage
+            .create_account("alice@example.com", None)
+            .await
+            .expect("alice");
+        let bob = storage
+            .create_account("bob@example.com", None)
+            .await
+            .expect("bob");
+
+        let calendar = storage
+            .create_calendar(alice.id, "Personal".to_string(), None)
+            .await
+            .expect("calendar");
+        let cal_id = calendar.id.to_string();
+
+        // Alice shares with bob (pending).
+        let shared = calendar_share(
+            share_args(&alice, &cal_id, "bob@example.com", "sharing"),
+            ctx_for(&storage, alice.clone()),
+        )
+        .await
+        .expect("share");
+        let invitation_id = shared["invitationId"].as_str().unwrap().to_string();
+
+        // While pending, bob's Calendar/get shows only… nothing shared.
+        let bob_ctx = ctx_for(&storage, bob.clone());
+        let before = calendar_get(json!({"accountId": bob.id.to_string()}), bob_ctx.clone())
+            .await
+            .expect("get before");
+        assert_eq!(before["list"].as_array().unwrap().len(), 0);
+
+        // Bob accepts.
+        storage
+            .accept_sharing(&invitation_id, bob.id)
+            .await
+            .expect("accept");
+
+        // Now the shared calendar appears with read-only rights.
+        let after = calendar_get(json!({"accountId": bob.id.to_string()}), bob_ctx)
+            .await
+            .expect("get after");
+        let list = after["list"].as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["id"], cal_id);
+        assert_eq!(list[0]["myRights"]["mayReadItems"], true);
+        assert_eq!(list[0]["myRights"]["mayWriteItems"], false);
+    }
 }

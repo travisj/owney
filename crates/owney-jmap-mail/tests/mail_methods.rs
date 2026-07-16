@@ -65,6 +65,8 @@ async fn harness() -> Harness {
         submitter: Some(Arc::new(MockSubmitter {
             submitted: submitted.clone(),
         })),
+        public_url: "https://test.local".to_string(),
+        federation: Default::default(),
     });
     Harness {
         dispatcher,

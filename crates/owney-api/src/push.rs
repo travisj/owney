@@ -103,6 +103,8 @@ async fn handle_socket(
         account,
         storage: state.storage.clone(),
         submitter: state.submitter.clone(),
+        public_url: state.public_url.clone(),
+        federation: state.federation.clone(),
     });
     let mut bus = state.events.subscribe();
     let mut push_enabled = false;

@@ -6,6 +6,8 @@
 //! - Account lookup by email
 //! - Federated invitation protocol
 
+use sequoia_openpgp::parse::Parse;
+use sequoia_openpgp::serialize::MarshalInto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -20,6 +22,13 @@ pub struct ServerMetadata {
     pub version: String,
     /// Admin contact email
     pub admin: Option<String>,
+    /// This server's public federation identity cert (ASCII-armored). Peers
+    /// encrypt events to it and verify its request signatures against it.
+    #[serde(default)]
+    pub public_cert: Option<String>,
+    /// Fingerprint of `public_cert`, for pinning.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
 }
 
 /// Account info returned from account lookup endpoint
@@ -39,14 +48,17 @@ pub struct CalendarInfo {
     pub name: String,
 }
 
-/// Federation invitation sent to remote server
+/// Federation invitation sent to remote server. The receiver binds inviter
+/// identity to the authenticated sending server (the signed request), so the
+/// `inviter_*` fields here are advisory metadata, not trusted identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FederationInvitation {
-    pub calendar_id: String,
+    /// Shared federation handle minted by the serving (inviter) server.
+    pub federation_id: String,
+    /// Capability secret gating the serve/notify path for this federation.
+    pub capability_secret: String,
     pub calendar_name: String,
     pub inviter_email: String,
-    pub inviter_account_id: String,
-    pub inviter_server_url: String,
     pub target_email: String,
     pub sharing_type: String, // "sharing" or "delegation"
     pub created_at: i64,
@@ -145,6 +157,98 @@ impl ServerDiscovery {
             _ => Err(DiscoveryError::InvitationFailed(resp.status().to_string())),
         }
     }
+}
+
+/// Candidate well-known URLs to try for a domain, in order.
+pub fn server_candidates(domain: &str) -> Vec<String> {
+    vec![
+        format!("https://{domain}/.well-known/owney/server"),
+        format!("https://mail.{domain}/.well-known/owney/server"),
+        format!("https://owney.{domain}/.well-known/owney/server"),
+    ]
+}
+
+/// Build a signing federation client for *this* server (loads/creates the
+/// server identity cert). `public_url` is this server's own base URL.
+pub async fn build_client(
+    storage: &owney_storage::Storage,
+    public_url: &str,
+    config: &crate::fed_sig::FederationConfig,
+) -> Result<crate::fed_sig::FederationClient, DiscoveryError> {
+    let domain = crate::fed_sig::host_of(public_url);
+    let cert = owney_pgp::server_cert(storage, &domain)
+        .await
+        .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()))?;
+    Ok(crate::fed_sig::FederationClient::new(cert, domain, config))
+}
+
+/// Discover a peer server for `domain`, fetch its public federation cert over a
+/// TLS-authenticated (SSRF-guarded) request, and pin it. This is the trust
+/// bootstrap. A fingerprint that differs from an existing pin is a hostile
+/// key-swap and is rejected without overwriting the pin.
+pub async fn discover_and_pin(
+    storage: &owney_storage::Storage,
+    client: &crate::fed_sig::FederationClient,
+    domain: &str,
+    config: &crate::fed_sig::FederationConfig,
+) -> Result<owney_storage::PeerServer, DiscoveryError> {
+    if !config.domain_allowed(domain) {
+        return Err(DiscoveryError::NotFound(format!(
+            "{domain} not allowlisted"
+        )));
+    }
+
+    for url in server_candidates(domain) {
+        let resp = match client.get_unsigned(&url).await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let meta: ServerMetadata = match resp.json().await {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let armored = meta
+            .public_cert
+            .ok_or_else(|| DiscoveryError::InvalidMetadata("peer has no public_cert".into()))?;
+        let cert = sequoia_openpgp::Cert::from_bytes(armored.as_bytes())
+            .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()))?;
+        let fingerprint = cert.fingerprint().to_hex();
+
+        // Reject a key-swap without overwriting the existing pin.
+        if let Some(existing) = storage
+            .federation_peer(domain)
+            .await
+            .map_err(|e| DiscoveryError::NetworkError(e.to_string()))?
+            && existing.fingerprint != fingerprint
+        {
+            tracing::error!(
+                %domain,
+                old = %existing.fingerprint,
+                new = %fingerprint,
+                "federation peer cert fingerprint changed — refusing (possible key-swap)"
+            );
+            return Err(DiscoveryError::InvalidMetadata(
+                "peer cert fingerprint changed".into(),
+            ));
+        }
+
+        let bin = cert
+            .strip_secret_key_material()
+            .to_vec()
+            .map_err(|e| DiscoveryError::InvalidMetadata(e.to_string()))?;
+        storage
+            .upsert_federation_peer(domain, &meta.server_url, bin, &fingerprint)
+            .await
+            .map_err(|e| DiscoveryError::NetworkError(e.to_string()))?;
+
+        return storage
+            .federation_peer(domain)
+            .await
+            .map_err(|e| DiscoveryError::NetworkError(e.to_string()))?
+            .ok_or_else(|| DiscoveryError::NetworkError("pin vanished".into()));
+    }
+
+    Err(DiscoveryError::NotFound(domain.to_string()))
 }
 
 #[derive(Debug)]

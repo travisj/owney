@@ -1,294 +1,211 @@
-//! Background sync of federated calendars.
+//! Background sync of federated calendars (the subscriber side).
 //!
-//! Polls remote servers for calendar changes and syncs events locally.
-//! Uses sync tokens for incremental updates (polling-based, can upgrade to webhooks).
+//! Pulls sealed event pages from each accepted **inbound** federation over a
+//! signed, capability-bearing request, decrypts and verifies them, and applies
+//! them read-only into the local mirror calendar. Reconciliation runs on an
+//! interval; the realtime push path (`fed_worker`) triggers an immediate pull.
 
-use owney_core::{CalendarId, EventId};
-use owney_storage::Storage;
-use serde::{Deserialize, Serialize};
+use owney_storage::{CalendarFederation, Storage};
 use std::sync::Arc;
 
-/// Sync job for a federated calendar
-#[derive(Debug, Clone)]
-pub struct FederationSyncJob {
-    pub federation_id: String,
-    pub calendar_id: CalendarId,
-    pub target_server_url: String,
-    pub sync_token: Option<String>,
-}
+use crate::fed_apply::{self, SyncPage};
+use crate::fed_sig::FederationConfig;
+use crate::federation;
 
-/// Calendar event from remote server (simplified)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteCalendarEvent {
-    pub id: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub start: i64,
-    pub end: i64,
-    pub rrule: Option<String>,
-    #[serde(default)]
-    pub removed: bool,
-}
-
-/// Sync response from remote server
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CalendarSyncResponse {
-    /// New or updated events
-    pub events: Vec<RemoteCalendarEvent>,
-    /// Event IDs to delete
-    #[serde(default)]
-    pub removed_event_ids: Vec<String>,
-    /// Token for next incremental sync
-    pub sync_token: Option<String>,
-    /// Whether there are more changes to fetch
-    #[serde(default)]
-    pub has_more_changes: bool,
-}
-
-/// Calendar sync coordinator - manages background polling of federated calendars
+/// Coordinates pulling of federated calendars.
 #[derive(Debug)]
 pub struct CalendarSyncCoordinator {
     storage: Arc<Storage>,
+    public_url: String,
+    config: FederationConfig,
 }
 
 impl CalendarSyncCoordinator {
-    pub fn new(storage: Arc<Storage>) -> Self {
-        Self { storage }
+    pub fn new(storage: Arc<Storage>, public_url: String, config: FederationConfig) -> Self {
+        Self {
+            storage,
+            public_url,
+            config,
+        }
     }
 
-    /// Sync a single federated calendar with remote server
-    pub async fn sync_federation(&self, job: FederationSyncJob) -> Result<SyncStats, SyncError> {
-        // Query remote server for changes since last sync
-        let sync_response = self.fetch_remote_changes(&job).await?;
+    /// Pull and apply all pending changes for one inbound federation.
+    pub async fn sync_federation(
+        &self,
+        federation: &CalendarFederation,
+    ) -> Result<SyncStats, SyncError> {
+        let capability = federation
+            .capability_secret
+            .as_deref()
+            .ok_or(SyncError::Misconfigured("no capability secret"))?;
+        let peer_domain = federation
+            .peer_domain
+            .as_deref()
+            .ok_or(SyncError::Misconfigured("no peer domain"))?;
 
+        let client = federation::build_client(&self.storage, &self.public_url, &self.config)
+            .await
+            .map_err(|e| SyncError::Crypto(e.to_string()))?;
+        let server_secret =
+            owney_pgp::server_cert(&self.storage, &crate::fed_sig::host_of(&self.public_url))
+                .await
+                .map_err(|e| SyncError::Crypto(e.to_string()))?;
+
+        // Resume from the stored keyset cursor "since|after".
+        let (mut since, mut after) = parse_cursor(federation.sync_token.as_deref());
         let mut stats = SyncStats::default();
 
-        // Upsert events from remote
-        for event in sync_response.events {
-            if event.removed {
-                // Delete event if marked removed
-                let event_id = event
-                    .id
-                    .parse::<EventId>()
-                    .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
-                self.storage
-                    .delete_calendar_event(event_id)
-                    .await
-                    .map_err(|e| SyncError::StorageError(e.to_string()))?;
-                stats.deleted += 1;
-            } else {
-                // Upsert event
-                self.upsert_remote_event(&job.calendar_id, event).await?;
-                stats.upserted += 1;
+        loop {
+            let url = format!(
+                "{}/.well-known/owney/calendar/sync/{}?since={}&after={}",
+                federation.target_server_url,
+                federation.id,
+                since,
+                urlencoding::encode(&after),
+            );
+            let resp = client
+                .get_capable(&url, peer_domain, capability)
+                .await
+                .map_err(|e| SyncError::Network(e.to_string()))?;
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                return Err(SyncError::FederationNotFound);
+            }
+            if !resp.status().is_success() {
+                return Err(SyncError::Remote(resp.status().to_string()));
+            }
+            let page: SyncPage = resp
+                .json()
+                .await
+                .map_err(|e| SyncError::Network(e.to_string()))?;
+
+            let applied = fed_apply::apply_page(&self.storage, &server_secret, federation, &page)
+                .await
+                .map_err(|e| SyncError::Apply(e.to_string()))?;
+            stats.applied += applied;
+
+            since = page.next_since;
+            after = page.next_after.clone();
+            if !page.has_more {
+                break;
             }
         }
 
-        // Delete removed events (by ID list)
-        for event_id_str in sync_response.removed_event_ids {
-            let event_id = event_id_str
-                .parse::<EventId>()
-                .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
-            self.storage
-                .delete_calendar_event(event_id)
-                .await
-                .map_err(|e| SyncError::StorageError(e.to_string()))?;
-            stats.deleted += 1;
-        }
-
-        // Update sync token and timestamp
+        // Persist the cursor for the next incremental pull.
         self.storage
-            .update_federation_sync_token(&job.federation_id, sync_response.sync_token)
+            .update_federation_sync_token(&federation.id, Some(format!("{since}|{after}")))
             .await
-            .map_err(|e| SyncError::StorageError(e.to_string()))?;
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
 
         Ok(stats)
     }
 
-    /// Upsert a remote event into local calendar
-    async fn upsert_remote_event(
-        &self,
-        calendar_id: &CalendarId,
-        event: RemoteCalendarEvent,
-    ) -> Result<(), SyncError> {
-        // Check if event exists
-        let event_id = event
-            .id
-            .parse::<EventId>()
-            .map_err(|_| SyncError::StorageError("invalid event id".into()))?;
-
-        match self.storage.get_calendar_event(event_id).await {
-            Ok(Some(_existing)) => {
-                // Update existing event
-                self.storage
-                    .update_calendar_event(
-                        event_id,
-                        Some(event.title),
-                        event.description,
-                        Some(event.start),
-                        Some(event.end),
-                        event.rrule,
-                    )
-                    .await
-                    .map_err(|e| SyncError::StorageError(e.to_string()))?;
-            }
-            Ok(None) => {
-                // Create new event
-                self.storage
-                    .create_calendar_event(
-                        *calendar_id,
-                        event.title,
-                        event.description,
-                        event.start,
-                        event.end,
-                        event.rrule,
-                    )
-                    .await
-                    .map_err(|e| SyncError::StorageError(e.to_string()))?;
-            }
-            Err(e) => return Err(SyncError::StorageError(e.to_string())),
-        }
-
-        Ok(())
-    }
-
-    /// Fetch calendar changes from remote server
-    async fn fetch_remote_changes(
-        &self,
-        job: &FederationSyncJob,
-    ) -> Result<CalendarSyncResponse, SyncError> {
-        let mut url = format!(
-            "{0}/.well-known/owney/calendar/sync/{1}",
-            job.target_server_url, job.federation_id
-        );
-
-        if let Some(token) = &job.sync_token {
-            url.push('?');
-            url.push_str(&format!("token={}", urlencoding::encode(token)));
-        }
-
-        tracing::debug!("fetching remote changes from: {}", url);
-
-        let resp = reqwest::Client::new()
-            .get(&url)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                return Err(SyncError::FederationNotFound);
-            }
-            return Err(SyncError::RemoteError(resp.status().to_string()));
-        }
-
-        resp.json::<CalendarSyncResponse>()
-            .await
-            .map_err(|e| SyncError::NetworkError(e.to_string()))
-    }
-
-    /// List all federation sync jobs that need attention
-    pub async fn list_sync_jobs(&self) -> Result<Vec<FederationSyncJob>, SyncError> {
+    /// Pull all accepted inbound federations (reconciliation pass).
+    pub async fn sync_all(&self) -> Result<SyncRunStats, SyncError> {
         let federations = self
             .storage
             .list_active_federations()
             .await
-            .map_err(|e| SyncError::StorageError(e.to_string()))?;
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
 
-        let jobs = federations
-            .into_iter()
-            .map(|f| FederationSyncJob {
-                federation_id: f.id,
-                calendar_id: f.calendar_id,
-                target_server_url: f.target_server_url,
-                sync_token: f.sync_token,
-            })
-            .collect();
+        let mut run = SyncRunStats::default();
+        tracing::info!(
+            "starting federation sync run for {} calendars",
+            federations.len()
+        );
 
-        Ok(jobs)
-    }
-
-    /// Run sync for all federated calendars (background task)
-    pub async fn sync_all(&self) -> Result<SyncRunStats, SyncError> {
-        let jobs = self.list_sync_jobs().await?;
-        let mut run_stats = SyncRunStats::default();
-
-        tracing::info!("starting federation sync run for {} calendars", jobs.len());
-
-        for job in jobs {
-            run_stats.total_federations += 1;
-
-            match self.sync_federation(job.clone()).await {
+        for federation in federations {
+            run.total += 1;
+            match self.sync_federation(&federation).await {
                 Ok(stats) => {
                     tracing::info!(
-                        federation_id = %job.federation_id,
-                        upserted = stats.upserted,
-                        deleted = stats.deleted,
+                        federation_id = %federation.id,
+                        applied = stats.applied,
                         "federation sync completed"
                     );
-                    run_stats.successful_syncs += 1;
-                    run_stats.total_upserted += stats.upserted;
-                    run_stats.total_deleted += stats.deleted;
+                    run.succeeded += 1;
+                    run.applied += stats.applied;
                 }
                 Err(e) => {
                     tracing::warn!(
-                        federation_id = %job.federation_id,
+                        federation_id = %federation.id,
                         error = %e,
                         "federation sync failed"
                     );
-                    run_stats.failed_syncs += 1;
-
-                    // Mark federation as error
-                    if let Err(err) = self.storage.mark_federation_error(&job.federation_id).await {
-                        tracing::error!("failed to mark federation error: {}", err);
+                    run.failed += 1;
+                    if let Err(err) = self.storage.mark_federation_error(&federation.id).await {
+                        tracing::error!("failed to mark federation error: {err}");
                     }
                 }
             }
         }
 
         tracing::info!(
-            successful = run_stats.successful_syncs,
-            failed = run_stats.failed_syncs,
-            upserted = run_stats.total_upserted,
-            deleted = run_stats.total_deleted,
+            succeeded = run.succeeded,
+            failed = run.failed,
+            applied = run.applied,
             "federation sync run completed"
         );
+        Ok(run)
+    }
 
-        Ok(run_stats)
+    /// Pull a single federation by id (used by the realtime push trigger).
+    pub async fn sync_one(&self, federation_id: &str) -> Result<SyncStats, SyncError> {
+        let federation = self
+            .storage
+            .get_federation(federation_id)
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?
+            .ok_or(SyncError::FederationNotFound)?;
+        if federation.direction.as_deref() != Some("inbound")
+            || !matches!(federation.status.as_str(), "accepted" | "syncing")
+        {
+            return Err(SyncError::Misconfigured("not an active inbound federation"));
+        }
+        self.sync_federation(&federation).await
     }
 }
 
-/// Statistics from a single federation sync
-#[derive(Debug, Clone, Default)]
-pub struct SyncStats {
-    pub upserted: usize,
-    pub deleted: usize,
+/// Parse the stored "since|after" keyset cursor.
+fn parse_cursor(token: Option<&str>) -> (i64, String) {
+    match token.and_then(|t| t.split_once('|')) {
+        Some((since, after)) => (since.parse().unwrap_or(0), after.to_string()),
+        None => (0, String::new()),
+    }
 }
 
-/// Statistics from a full sync run
+#[derive(Debug, Clone, Default)]
+pub struct SyncStats {
+    pub applied: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SyncRunStats {
-    pub total_federations: usize,
-    pub successful_syncs: usize,
-    pub failed_syncs: usize,
-    pub total_upserted: usize,
-    pub total_deleted: usize,
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub applied: usize,
 }
 
 #[derive(Debug)]
 pub enum SyncError {
-    NetworkError(String),
-    RemoteError(String),
-    StorageError(String),
+    Network(String),
+    Remote(String),
+    Storage(String),
+    Crypto(String),
+    Apply(String),
+    Misconfigured(&'static str),
     FederationNotFound,
 }
 
 impl std::fmt::Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SyncError::NetworkError(msg) => write!(f, "network error: {msg}"),
-            SyncError::RemoteError(msg) => write!(f, "remote error: {msg}"),
-            SyncError::StorageError(msg) => write!(f, "storage error: {msg}"),
+            SyncError::Network(m) => write!(f, "network error: {m}"),
+            SyncError::Remote(m) => write!(f, "remote error: {m}"),
+            SyncError::Storage(m) => write!(f, "storage error: {m}"),
+            SyncError::Crypto(m) => write!(f, "crypto error: {m}"),
+            SyncError::Apply(m) => write!(f, "apply error: {m}"),
+            SyncError::Misconfigured(m) => write!(f, "misconfigured: {m}"),
             SyncError::FederationNotFound => write!(f, "federation not found on remote"),
         }
     }
@@ -301,15 +218,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sync_error_display() {
-        let err = SyncError::NetworkError("connection refused".to_string());
-        assert_eq!(err.to_string(), "network error: connection refused");
+    fn cursor_round_trip() {
+        assert_eq!(parse_cursor(None), (0, String::new()));
+        assert_eq!(parse_cursor(Some("42|abc")), (42, "abc".to_string()));
+        assert_eq!(parse_cursor(Some("garbage")), (0, String::new()));
     }
 
     #[test]
-    fn sync_stats_default() {
-        let stats = SyncStats::default();
-        assert_eq!(stats.upserted, 0);
-        assert_eq!(stats.deleted, 0);
+    fn sync_error_display() {
+        assert_eq!(
+            SyncError::Network("boom".into()).to_string(),
+            "network error: boom"
+        );
     }
 }

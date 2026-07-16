@@ -3,6 +3,7 @@
 //! Runs periodically to poll remote servers and sync calendar changes.
 
 use crate::calendar_sync::CalendarSyncCoordinator;
+use crate::fed_sig::FederationConfig;
 use owney_storage::Storage;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,18 +30,34 @@ impl Default for SyncWorkerConfig {
 #[derive(Debug)]
 pub struct SyncWorker {
     storage: Arc<Storage>,
+    public_url: String,
+    federation: FederationConfig,
     config: SyncWorkerConfig,
 }
 
 impl SyncWorker {
-    pub fn new(storage: Arc<Storage>, config: SyncWorkerConfig) -> Self {
-        Self { storage, config }
+    pub fn new(
+        storage: Arc<Storage>,
+        public_url: String,
+        federation: FederationConfig,
+        config: SyncWorkerConfig,
+    ) -> Self {
+        Self {
+            storage,
+            public_url,
+            federation,
+            config,
+        }
     }
 
     /// Start the background sync worker
     /// Runs indefinitely, syncing all federations at configured interval
     pub async fn run(self) -> ! {
-        let coordinator = CalendarSyncCoordinator::new(self.storage.clone());
+        let coordinator = CalendarSyncCoordinator::new(
+            self.storage.clone(),
+            self.public_url.clone(),
+            self.federation.clone(),
+        );
         let interval = Duration::from_secs(self.config.interval_secs);
 
         tracing::info!(
@@ -57,11 +74,10 @@ impl SyncWorker {
             match coordinator.sync_all().await {
                 Ok(stats) => {
                     tracing::debug!(
-                        total = stats.total_federations,
-                        successful = stats.successful_syncs,
-                        failed = stats.failed_syncs,
-                        upserted = stats.total_upserted,
-                        deleted = stats.total_deleted,
+                        total = stats.total,
+                        succeeded = stats.succeeded,
+                        failed = stats.failed,
+                        applied = stats.applied,
                         "sync run completed"
                     );
                 }
@@ -74,7 +90,11 @@ impl SyncWorker {
 
     /// Run sync once (for testing or manual triggers)
     pub async fn sync_once(&self) -> Result<(), String> {
-        let coordinator = CalendarSyncCoordinator::new(self.storage.clone());
+        let coordinator = CalendarSyncCoordinator::new(
+            self.storage.clone(),
+            self.public_url.clone(),
+            self.federation.clone(),
+        );
         coordinator.sync_all().await.map_err(|e| e.to_string())?;
         Ok(())
     }

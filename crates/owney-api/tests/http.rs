@@ -30,6 +30,7 @@ async fn test_state() -> (Arc<ApiState>, String, tempfile::TempDir) {
         events: EventBus::new(8),
         submitter: None,
         public_url: "https://mail.example.com".into(),
+        federation: Default::default(),
     });
     (state, token, dir)
 }
