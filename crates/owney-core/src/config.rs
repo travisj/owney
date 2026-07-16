@@ -34,7 +34,32 @@ pub struct Config {
     #[serde(default)]
     pub spam: SpamConfig,
     #[serde(default)]
+    pub oidc: OidcConfig,
+    #[serde(default)]
     pub log: LogConfig,
+}
+
+/// OIDC identity provider ("sign in with your mail server").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct OidcConfig {
+    /// Master switch. OFF by default: no OIDC endpoint is mounted until the
+    /// operator turns this on (security endpoints default off until tested).
+    pub enabled: bool,
+    pub access_token_ttl_secs: u64,
+    pub id_token_ttl_secs: u64,
+    pub refresh_token_ttl_secs: u64,
+}
+
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            access_token_ttl_secs: 3_600,
+            id_token_ttl_secs: 3_600,
+            refresh_token_ttl_secs: 30 * 24 * 3_600,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,6 +384,15 @@ reject_threshold = 0.9
 quarantine_threshold = 0.7
 # DNSBL zones to check (reverse-octet A-record lookups).
 dnsbl_zones = ["zen.spamhaus.org"]
+
+[oidc]
+# OIDC identity provider ("sign in with your mail server"). Default off.
+# Requires HTTPS at api.public_url in production (WebAuthn needs a secure
+# context; http://localhost works for testing). See docs/OIDC.md.
+enabled = false
+access_token_ttl_secs = 3600
+id_token_ttl_secs = 3600
+refresh_token_ttl_secs = 2592000
 
 [log]
 # Log filter, e.g. "info" or "owney_smtp_in=debug,info".

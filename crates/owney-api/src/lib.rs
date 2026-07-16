@@ -12,6 +12,7 @@ pub mod fed_sig;
 pub mod fed_worker;
 pub mod federation;
 pub mod https;
+pub mod oidc;
 pub mod push;
 pub mod renewal;
 pub mod schedule;
@@ -58,6 +59,9 @@ pub struct ApiState {
     pub public_url: String,
     /// Federation transport/trust configuration for this instance.
     pub federation: fed_sig::FederationConfig,
+    /// OIDC provider state; `None` unless `[oidc] enabled = true`. When `None`,
+    /// no OIDC routes are mounted and every OIDC handler 404s.
+    pub oidc: Option<Arc<oidc::OidcState>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -94,6 +98,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/.well-known/openpgpkey/policy", get(|| async { "" }))
         .merge(wellknown::routes(state.federation.enabled))
         .merge(schedule::routes())
+        .merge(oidc::routes(state.oidc.is_some()))
         .route("/mcp", post(mcp))
         .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
         .with_state(state)
@@ -106,7 +111,7 @@ async fn mcp(
     headers: HeaderMap,
     body: String,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, oidc::SCOPE_MCP).await?;
     let request: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -212,11 +217,55 @@ pub(crate) async fn authenticate(
     }
 }
 
+/// Resolve a bearer token and require it to carry `scope`. Legacy admin tokens
+/// (full access) satisfy any scope; OIDC-minted tokens must have been granted
+/// this exact scope. A valid token lacking the scope gets 403 `insufficient_scope`;
+/// an unknown/expired token gets 401. IMAP is unaffected — it authenticates via
+/// `account_by_token`, which never accepts a scoped token.
+pub(crate) async fn authenticate_scoped(
+    state: &ApiState,
+    headers: &HeaderMap,
+    scope: &str,
+) -> Result<Account, Response> {
+    let unauthorized = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "authentication required",
+        )
+            .into_response()
+    };
+
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or_else(unauthorized)?;
+
+    match state.storage.account_and_access_by_token(token).await {
+        Ok(Some((account, access))) if access.allows(scope) => Ok(account),
+        Ok(Some(_)) => Err((
+            StatusCode::FORBIDDEN,
+            [(
+                header::WWW_AUTHENTICATE,
+                format!("Bearer error=\"insufficient_scope\", scope=\"{scope}\""),
+            )],
+            "insufficient scope",
+        )
+            .into_response()),
+        Ok(None) => Err(unauthorized()),
+        Err(err) => {
+            tracing::error!(%err, "token lookup failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+    }
+}
+
 async fn session(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, oidc::SCOPE_MAIL).await?;
     let session = Session::for_account(
         &state.public_url,
         &account.email,
@@ -232,7 +281,7 @@ async fn api(
     headers: HeaderMap,
     body: String,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, oidc::SCOPE_MAIL).await?;
 
     if body.len() as u64 > state.dispatcher.limits().max_size_request {
         let problem = jmap_core::RequestError::Limit("maxSizeRequest").problem_details();
@@ -269,7 +318,7 @@ async fn upload(
     Path(account_id): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, oidc::SCOPE_MAIL).await?;
     if account_id != account.id.to_string() {
         return Err(StatusCode::NOT_FOUND.into_response());
     }
@@ -303,7 +352,7 @@ async fn download(
     headers: HeaderMap,
     Path((account_id, blob_id, _name)): Path<(String, String, String)>,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, oidc::SCOPE_MAIL).await?;
     if account_id != account.id.to_string() {
         return Err(StatusCode::NOT_FOUND.into_response());
     }

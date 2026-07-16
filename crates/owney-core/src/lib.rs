@@ -14,5 +14,5 @@ pub use config::Config;
 pub use error::ConfigError;
 pub use id::{
     AccountId, BlobId, BookingId, CalendarId, ContactId, CreateId, DataType, EmailId,
-    EmailSubmissionId, EventId, MailboxId, ModSeq, SchedulingPageId, ThreadId,
+    EmailSubmissionId, EventId, MailboxId, ModSeq, OAuthClientId, SchedulingPageId, ThreadId,
 };

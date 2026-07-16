@@ -84,6 +84,10 @@ uuid_id!(
     /// A visitor booking made through a scheduling page.
     BookingId
 );
+uuid_id!(
+    /// A registered OAuth/OIDC client application.
+    OAuthClientId
+);
 
 /// A client-supplied creation reference (RFC 8620 §3.6.1). Distinct
 /// from server-assigned ids so the type system can catch mismatches;

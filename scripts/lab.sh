@@ -126,6 +126,11 @@ model = ""
 base_url = ""
 api_key_env = "UNSET_LAB_KEY"
 
+[oidc]
+# OIDC provider on. http://<host>:<port> is a secure context for WebAuthn only
+# on localhost; the lab maps the logical host to 127.0.0.1 (see \`lab.sh hosts\`).
+enabled = true
+
 [log]
 filter = "info"
 EOF

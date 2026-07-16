@@ -542,6 +542,51 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX bookings_by_page ON bookings (page_id, start);
     CREATE INDEX bookings_by_account_time ON bookings (account_id, start, end);
     "#,
+    // 21 -> 22: OIDC identity provider: registered OAuth clients, remembered
+    // consent grants, rotating refresh tokens. app_passwords learns expiry /
+    // scopes / client linkage so OIDC-minted access tokens reuse the bearer
+    // path (NULL scopes = full-access legacy token; scoped tokens are
+    // rejected by account_by_token so IMAP never accepts them).
+    r#"
+    CREATE TABLE oauth_clients (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        redirect_uris TEXT NOT NULL,
+        secret_hash   TEXT,
+        disabled      INTEGER NOT NULL DEFAULT 0,
+        created_at    INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE TABLE oauth_grants (
+        id          TEXT PRIMARY KEY,
+        account_id  TEXT NOT NULL REFERENCES accounts(id),
+        client_id   TEXT NOT NULL REFERENCES oauth_clients(id),
+        scopes      TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        UNIQUE (account_id, client_id)
+    ) STRICT;
+    CREATE INDEX oauth_grants_by_account ON oauth_grants (account_id);
+
+    CREATE TABLE oauth_refresh_tokens (
+        token_hash        TEXT PRIMARY KEY,
+        family_id         TEXT NOT NULL,
+        account_id        TEXT NOT NULL REFERENCES accounts(id),
+        client_id         TEXT NOT NULL REFERENCES oauth_clients(id),
+        scopes            TEXT NOT NULL,
+        access_token_hash TEXT,
+        expires_at        INTEGER NOT NULL,
+        used_at           INTEGER,
+        revoked_at        INTEGER,
+        created_at        INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX oauth_refresh_by_family ON oauth_refresh_tokens (family_id);
+    CREATE INDEX oauth_refresh_by_account ON oauth_refresh_tokens (account_id, client_id);
+
+    ALTER TABLE app_passwords ADD COLUMN expires_at INTEGER;
+    ALTER TABLE app_passwords ADD COLUMN scopes TEXT;
+    ALTER TABLE app_passwords ADD COLUMN oauth_client_id TEXT REFERENCES oauth_clients(id);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {

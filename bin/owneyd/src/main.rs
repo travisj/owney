@@ -250,6 +250,43 @@ enum AdminCommand {
         #[arg(long)]
         end: Option<i64>,
     },
+    /// Register an OIDC/OAuth client application. Prints the client id and (for
+    /// confidential clients) the secret exactly once.
+    CreateOauthClient {
+        /// Human-readable application name (shown on the consent screen).
+        name: String,
+        /// Allowed redirect URI. Repeat for several; each must be absolute
+        /// http(s) with no fragment.
+        #[arg(long = "redirect-uri", required = true)]
+        redirect_uri: Vec<String>,
+        /// Register as a public client (no secret; PKCE only). Native/SPA apps.
+        #[arg(long)]
+        public: bool,
+    },
+    /// List registered OAuth clients.
+    OauthClients,
+    /// Disable an OAuth client and revoke every token it issued (irreversible).
+    RevokeOauthClient {
+        /// The client id (from `admin oauth-clients`).
+        client_id: String,
+    },
+    /// List the OAuth clients an account has consented to, and their scopes.
+    OauthGrants {
+        /// The account's address.
+        email: String,
+    },
+    /// Revoke an account's consent for a client and kill its live tokens.
+    RevokeOauthGrant {
+        /// The account's address.
+        email: String,
+        /// The client id (from `admin oauth-grants`).
+        client_id: String,
+    },
+    /// Mint a short-lived token and print the URL for enrolling a login passkey.
+    EnrollPasskey {
+        /// The account's address.
+        email: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -702,6 +739,24 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     );
     let federation_public_url = public_url.clone();
     let federation_config = owney_api::fed_sig::FederationConfig::from_env();
+
+    // OIDC provider: built only when enabled. Loads/generates the RS256 signing
+    // key under the data dir, then spawns the ceremony-state sweeper.
+    let oidc = if config.oidc.enabled {
+        let signing_key =
+            owney_api::oidc::OidcSigningKey::load_or_generate(&config.storage.data_dir)
+                .context("loading OIDC signing key")?;
+        let oidc_state = Arc::new(
+            owney_api::oidc::OidcState::new(config.oidc.clone(), public_url.clone(), signing_key)
+                .context("building OIDC state")?,
+        );
+        owney_api::oidc::OidcState::spawn_sweeper(oidc_state.clone());
+        tracing::info!(issuer = %public_url, "OIDC provider enabled");
+        Some(oidc_state)
+    } else {
+        None
+    };
+
     let api_state = Arc::new(owney_api::ApiState {
         dispatcher,
         storage: storage.clone(),
@@ -709,6 +764,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         submitter: Some(delivery.clone() as Arc<dyn owney_delivery::Submitter>),
         public_url,
         federation: federation_config.clone(),
+        oidc,
     });
     let api_listener = tokio::net::TcpListener::bind(&config.api.listen)
         .await
@@ -1326,6 +1382,126 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .await
                 .context("creating event")?;
             println!("created event {} ({})", event.title, event.id);
+            Ok(())
+        }
+        AdminCommand::CreateOauthClient {
+            name,
+            redirect_uri,
+            public,
+        } => {
+            let (client, secret) = storage
+                .create_oauth_client(&name, &redirect_uri, public)
+                .await
+                .context("creating oauth client")?;
+            println!("client_id: {}", client.id);
+            println!("name:      {}", client.name);
+            println!(
+                "type:      {}",
+                if client.public {
+                    "public (PKCE only)"
+                } else {
+                    "confidential"
+                }
+            );
+            for uri in &client.redirect_uris {
+                println!("redirect:  {uri}");
+            }
+            match secret {
+                Some(secret) => {
+                    println!("client_secret: {secret}");
+                    eprintln!("(store the secret now — it is not shown again)");
+                }
+                None => eprintln!("(public client: no secret; the app must use PKCE)"),
+            }
+            Ok(())
+        }
+        AdminCommand::OauthClients => {
+            let clients = storage
+                .list_oauth_clients()
+                .await
+                .context("listing oauth clients")?;
+            if clients.is_empty() {
+                println!("no oauth clients — create one with `admin create-oauth-client`");
+            }
+            for client in clients {
+                println!(
+                    "{}  {}  {}{}",
+                    client.id,
+                    if client.public {
+                        "public      "
+                    } else {
+                        "confidential"
+                    },
+                    client.name,
+                    if client.disabled { "  [disabled]" } else { "" },
+                );
+            }
+            Ok(())
+        }
+        AdminCommand::RevokeOauthClient { client_id } => {
+            let id = client_id.parse().context("bad client id")?;
+            storage
+                .disable_oauth_client(id)
+                .await
+                .context("revoking oauth client")?;
+            println!("revoked client {client_id}; all its tokens are now invalid");
+            Ok(())
+        }
+        AdminCommand::OauthGrants { email } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let grants = storage
+                .list_oauth_grants(account.id)
+                .await
+                .context("listing oauth grants")?;
+            if grants.is_empty() {
+                println!("{email} has not authorized any oauth clients");
+            }
+            for grant in grants {
+                println!("{}  {}", grant.client_id, grant.scopes.join(" "));
+            }
+            Ok(())
+        }
+        AdminCommand::RevokeOauthGrant { email, client_id } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let id = client_id.parse().context("bad client id")?;
+            storage
+                .revoke_oauth_grant(account.id, id)
+                .await
+                .context("revoking oauth grant")?;
+            println!("revoked {email}'s consent for client {client_id}");
+            Ok(())
+        }
+        AdminCommand::EnrollPasskey { email } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            if !config.oidc.enabled {
+                eprintln!(
+                    "note: [oidc] enabled = false — the enroll page will 404 until OIDC is on"
+                );
+            }
+            let token = storage
+                .create_token(account.id, "passkey enrollment")
+                .await
+                .context("creating token")?;
+            let public_url = if config.api.public_url.is_empty() {
+                format!("https://{}", config.server.hostname)
+            } else {
+                config.api.public_url.clone()
+            };
+            println!("Open {public_url}/oidc/enroll and paste this token:");
+            println!("{token}");
+            eprintln!("(single account token — it is not shown again)");
             Ok(())
         }
         AdminCommand::DisableAccount { email } => {

@@ -215,6 +215,27 @@ Calendar Federation - Multi-user sharing with cross-server support
 
 **Docs**: `docs/SCHEDULING.md`
 
+### OIDC Identity Provider ("Sign in with Owney") ✅
+- Default **off** (`[oidc] enabled = false`); no routes mounted until on
+- Authorization-code + PKCE (S256) flow; login is a **passkey assertion**
+  (webauthn-rs), consent is remembered per (account, client)
+- RS256 ID tokens signed by a key auto-generated under `<data_dir>/oidc/`;
+  published via `/oidc/jwks.json` + `/.well-known/openid-configuration`
+- Opaque scoped access tokens reuse the `app_passwords` table (scoped+expiring);
+  `authenticate_scoped` gates JMAP/push on `owney:mail` and `/mcp` on `owney:mcp`.
+  IMAP's `account_by_token` rejects scoped tokens, so they can't be IMAP passwords
+- Rotating refresh tokens with **family reuse-detection**; RFC 7009 revocation
+- Open-redirect guard: bad client/redirect_uri → error page, never a redirect
+- Clients + grants are admin-managed; codes/ceremony state are in-memory (TTL'd)
+
+**Files**:
+- `crates/owney-storage/src/oauth.rs` - Clients, grants, refresh tokens (rotation)
+- `crates/owney-storage/src/tokens.rs` - `TokenAccess`, scoped-token minting/lookup
+- `crates/owney-api/src/oidc/` - keys, discovery, enroll, authorize, consent, token
+- `bin/owneyd/src/main.rs` - `admin create-oauth-client|oauth-clients|…|enroll-passkey`
+
+**Docs**: `docs/OIDC.md` (lists the test that proves each capability)
+
 ### Future Features (M12+)
 - Calendar UI integration
 - Contact management

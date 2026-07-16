@@ -30,6 +30,7 @@ mod ingest;
 mod keys;
 mod mail_queries;
 mod migrations;
+mod oauth;
 mod passwordless;
 mod pgp_store;
 mod queue;
@@ -61,6 +62,7 @@ pub use federation_store::{FederationOutboxItem, PeerServer};
 pub use ingest::{EmailSummary, IngestedEmail, MailboxTarget};
 pub use keys::{MASTER_KEY_FILE, MasterKey};
 pub use mail_queries::{ChangesResult, EmailRow, MailboxRow};
+pub use oauth::{OAuthClient, OAuthGrant, RefreshTokenRow};
 pub use passwordless::{ApprovalRequest, DevicePairing, PasskeyCredential, RecoveryCode};
 pub use pgp_store::PgpPeer;
 pub use queue::{AttemptOutcome, QueueItem};
@@ -69,6 +71,7 @@ pub use scheduling::{
     SchedulingPagePatch, TimeWindow,
 };
 pub use search::SearchIndex;
+pub use tokens::TokenAccess;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
@@ -357,6 +360,13 @@ impl Storage {
 
                 // Delete cascade: aliases, submissions, tokens, pgp_peers, pgp_own_keys, ai_actions, ai_annotations, email_keywords, email_mailbox, emails, threads, mailboxes, states, accounts
                 for table in &[
+                    "oauth_refresh_tokens",
+                    "oauth_grants",
+                    // approval_requests references device_pairings; order matters.
+                    "approval_requests",
+                    "device_pairings",
+                    "passkey_credentials",
+                    "recovery_codes",
                     "bookings",
                     "scheduling_pages",
                     "aliases",

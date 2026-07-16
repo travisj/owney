@@ -31,6 +31,7 @@ fn make_state(
         submitter: None,
         public_url: public_url.to_string(),
         federation,
+        oidc: None,
     })
 }
 

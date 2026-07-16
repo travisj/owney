@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 28rem; margin: 3rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  .client { color: #5f6368; }
+  label { display: block; margin: 1rem 0 0.25rem; font-weight: 600; }
+  input { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; }
+  button { margin-top: 1.5rem; padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+  #status { margin-top: 1rem; padding: 0.75rem; border-radius: 4px; white-space: pre-wrap; }
+  .err { background: #fce8e6; color: #c5221f; }
+  .info { background: #e8f0fe; color: #1967d2; }
+</style>
+</head>
+<body>
+<h1>Sign in</h1>
+<p class="client"><strong>{{CLIENT}}</strong> wants you to sign in with a passkey.</p>
+<label for="email">Email</label>
+<input id="email" type="email" autocomplete="username webauthn" placeholder="you@example.com">
+<button id="go">Continue with passkey</button>
+<div id="status"></div>
+<script>
+const REQ = "{{REQ_ID}}";
+const b64uToBuf = (s) => {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+};
+const bufToB64u = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const show = (msg, cls) => {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = cls;
+};
+document.getElementById('go').onclick = async () => {
+  const email = document.getElementById('email').value.trim();
+  if (!email) { show('Enter your email.', 'err'); return; }
+  try {
+    show('Starting…', 'info');
+    let r = await fetch('/oidc/authorize/login/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ req: REQ, email }),
+    });
+    if (!r.ok) { show('Sign-in failed: ' + (await r.json()).error, 'err'); return; }
+    const { ceremony, options } = await r.json();
+    const pk = options.publicKey;
+    pk.challenge = b64uToBuf(pk.challenge);
+    if (pk.allowCredentials) pk.allowCredentials.forEach(c => c.id = b64uToBuf(c.id));
+    show('Waiting for your authenticator…', 'info');
+    const assertion = await navigator.credentials.get({ publicKey: pk });
+    const credential = {
+      id: assertion.id,
+      rawId: bufToB64u(assertion.rawId),
+      type: assertion.type,
+      response: {
+        authenticatorData: bufToB64u(assertion.response.authenticatorData),
+        clientDataJSON: bufToB64u(assertion.response.clientDataJSON),
+        signature: bufToB64u(assertion.response.signature),
+        userHandle: assertion.response.userHandle ? bufToB64u(assertion.response.userHandle) : null,
+      },
+    };
+    r = await fetch('/oidc/authorize/login/finish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ req: REQ, ceremony, credential }),
+    });
+    if (!r.ok) { show('Sign-in failed: ' + (await r.json()).error, 'err'); return; }
+    const { redirect } = await r.json();
+    window.location = redirect;
+  } catch (e) {
+    show('Error: ' + e, 'err');
+  }
+};
+</script>
+</body>
+</html>

@@ -67,6 +67,7 @@ async fn harness() -> Harness {
         submitter: None,
         public_url: "http://alice.local:8381".into(),
         federation: Default::default(),
+        oidc: None,
     });
     Harness {
         app: router(state.clone()),

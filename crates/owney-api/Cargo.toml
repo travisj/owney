@@ -40,6 +40,8 @@ sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
 chrono-tz = "0.10"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+rsa.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -48,6 +50,8 @@ http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 owney-ai = { path = "../owney-ai" }
 mail-parser = { workspace = true }
+webauthn-authenticator-rs = { version = "0.5", features = ["softpasskey", "softtoken"] }
+url = "2.5.8"
 
 [lints]
 workspace = true

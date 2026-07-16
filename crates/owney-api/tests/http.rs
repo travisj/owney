@@ -31,6 +31,7 @@ async fn test_state() -> (Arc<ApiState>, String, tempfile::TempDir) {
         submitter: None,
         public_url: "https://mail.example.com".into(),
         federation: Default::default(),
+        oidc: None,
     });
     (state, token, dir)
 }

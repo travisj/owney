@@ -30,6 +30,32 @@ impl ChallengeStore {
         }
     }
 
+    /// Store opaque data under a fresh random id with an explicit TTL, returning
+    /// the id. Used by the OIDC flows to park WebAuthn ceremony state and
+    /// authorization codes for exactly as long as each step allows.
+    pub async fn store_with_ttl(&self, data: Vec<u8>, ttl: std::time::Duration) -> String {
+        let session_id = Uuid::now_v7().to_string();
+        let ttl = Duration::from_std(ttl).unwrap_or_else(|_| Duration::minutes(10));
+        let expires_at = Utc::now() + ttl;
+        self.entries
+            .write()
+            .await
+            .insert(session_id.clone(), ChallengeEntry { data, expires_at });
+        session_id
+    }
+
+    /// Store opaque data under a caller-chosen key with an explicit TTL. Used
+    /// for OIDC authorization codes, where the key *is* the secret handed to the
+    /// client and looked up again at the token endpoint.
+    pub async fn store_keyed(&self, key: String, data: Vec<u8>, ttl: std::time::Duration) {
+        let ttl = Duration::from_std(ttl).unwrap_or_else(|_| Duration::minutes(10));
+        let expires_at = Utc::now() + ttl;
+        self.entries
+            .write()
+            .await
+            .insert(key, ChallengeEntry { data, expires_at });
+    }
+
     /// Store a challenge with a 10-minute TTL.
     pub async fn store_challenge(&self, challenge: Vec<u8>) -> Result<String, String> {
         let session_id = Uuid::now_v7().to_string();
@@ -44,6 +70,22 @@ impl ChallengeStore {
         );
 
         Ok(session_id)
+    }
+
+    /// Non-consuming read of a stored entry, returning `None` if it is missing
+    /// or expired (expired entries are evicted). Used for multi-step OIDC flows
+    /// where the parked authorization request must survive several requests
+    /// before it is finally consumed at code-mint time.
+    pub async fn peek(&self, id: &str) -> Option<Vec<u8>> {
+        let mut entries = self.entries.write().await;
+        match entries.get(id) {
+            Some(entry) if Utc::now() <= entry.expires_at => Some(entry.data.clone()),
+            Some(_) => {
+                entries.remove(id);
+                None
+            }
+            None => None,
+        }
     }
 
     /// Retrieve and consume a challenge.

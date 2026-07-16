@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::{ApiState, JmapCtx, authenticate};
+use crate::oidc::SCOPE_MAIL;
+use crate::{ApiState, JmapCtx, authenticate_scoped};
 
 /// The `urn:ietf:params:jmap:websocket` capability object for the session.
 pub fn websocket_capability(public_url: &str) -> Value {
@@ -54,7 +55,7 @@ pub async fn eventsource(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, SCOPE_MAIL).await?;
     let account_id = account.id;
 
     let stream = BroadcastStream::new(state.events.subscribe()).filter_map(move |event| {
@@ -87,7 +88,7 @@ pub async fn websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, Response> {
-    let account = authenticate(&state, &headers).await?;
+    let account = authenticate_scoped(&state, &headers, SCOPE_MAIL).await?;
     Ok(upgrade
         .protocols(["jmap"])
         .on_upgrade(move |socket| handle_socket(socket, state, account)))
