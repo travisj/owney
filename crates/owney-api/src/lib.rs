@@ -7,10 +7,14 @@ pub mod auth;
 pub mod background_worker;
 pub mod calendar_sync;
 pub mod challenge_store;
+pub mod fed_apply;
+pub mod fed_sig;
+pub mod fed_worker;
 pub mod federation;
 pub mod https;
 pub mod push;
 pub mod renewal;
+pub mod schedule;
 pub mod wellknown;
 
 use std::sync::Arc;
@@ -30,6 +34,11 @@ pub struct JmapCtx {
     pub storage: Arc<Storage>,
     /// Outbound pipeline; None in read-only deployments and some tests.
     pub submitter: Option<Arc<dyn owney_delivery::Submitter>>,
+    /// This server's public base URL, e.g. `https://mail.example.com`. Used to
+    /// derive our federation identity when initiating a cross-server share.
+    pub public_url: String,
+    /// Federation transport/trust configuration for this instance.
+    pub federation: fed_sig::FederationConfig,
 }
 
 impl std::fmt::Debug for JmapCtx {
@@ -47,6 +56,8 @@ pub struct ApiState {
     pub submitter: Option<Arc<dyn owney_delivery::Submitter>>,
     /// Base URL clients reach us at, e.g. `https://mail.example.com`.
     pub public_url: String,
+    /// Federation transport/trust configuration for this instance.
+    pub federation: fed_sig::FederationConfig,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -81,7 +92,8 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/jmap/upload/{account_id}", post(upload))
         .route("/.well-known/openpgpkey/hu/{hash}", get(wkd_key))
         .route("/.well-known/openpgpkey/policy", get(|| async { "" }))
-        .merge(wellknown::routes())
+        .merge(wellknown::routes(state.federation.enabled))
+        .merge(schedule::routes())
         .route("/mcp", post(mcp))
         .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
         .with_state(state)
@@ -239,6 +251,8 @@ async fn api(
         account,
         storage: state.storage.clone(),
         submitter: state.submitter.clone(),
+        public_url: state.public_url.clone(),
+        federation: state.federation.clone(),
     });
     match state.dispatcher.process(request, ctx).await {
         Ok(response) => Ok(axum::Json(response).into_response()),

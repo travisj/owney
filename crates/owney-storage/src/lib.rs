@@ -17,6 +17,7 @@
 
 mod ai_store;
 mod aliases;
+mod attributes;
 mod blob;
 mod calendar;
 mod calendar_sharing;
@@ -24,6 +25,7 @@ mod chat_preferences;
 mod contacts;
 mod db;
 mod error;
+mod federation_store;
 mod ingest;
 mod keys;
 mod mail_queries;
@@ -31,6 +33,7 @@ mod migrations;
 mod passwordless;
 mod pgp_store;
 mod queue;
+mod scheduling;
 mod search;
 mod spam_store;
 mod tokens;
@@ -44,19 +47,27 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 pub use ai_store::AiAction;
 pub use aliases::Alias;
+pub use attributes::EmailAttribute;
 pub use blob::BlobStore;
 pub use calendar::{Calendar, CalendarEvent};
-pub use calendar_sharing::{CalendarInvitation, CalendarSharing, Permissions, SharingType};
+pub use calendar_sharing::{
+    CalendarFederation, CalendarInvitation, CalendarSharing, Permissions, SharingType,
+};
 pub use chat_preferences::{ChatMode, ChatPreference};
 pub use contacts::Contact;
 pub use db::Db;
 pub use error::StorageError;
+pub use federation_store::{FederationOutboxItem, PeerServer};
 pub use ingest::{EmailSummary, IngestedEmail, MailboxTarget};
 pub use keys::{MASTER_KEY_FILE, MasterKey};
 pub use mail_queries::{ChangesResult, EmailRow, MailboxRow};
 pub use passwordless::{ApprovalRequest, DevicePairing, PasskeyCredential, RecoveryCode};
 pub use pgp_store::PgpPeer;
 pub use queue::{AttemptOutcome, QueueItem};
+pub use scheduling::{
+    Availability, BookSlotRequest, Booking, NewSchedulingPage, PageStatus, SchedulingPage,
+    SchedulingPagePatch, TimeWindow,
+};
 pub use search::SearchIndex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +357,8 @@ impl Storage {
 
                 // Delete cascade: aliases, submissions, tokens, pgp_peers, pgp_own_keys, ai_actions, ai_annotations, email_keywords, email_mailbox, emails, threads, mailboxes, states, accounts
                 for table in &[
+                    "bookings",
+                    "scheduling_pages",
                     "aliases",
                     "submissions",
                     "queue",
@@ -354,6 +367,7 @@ impl Storage {
                     "pgp_own_keys",
                     "ai_actions",
                     "ai_annotations",
+                    "email_attributes",
                     "email_keyword",
                     "email_mailbox",
                     "emails",

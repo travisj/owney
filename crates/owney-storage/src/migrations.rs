@@ -396,6 +396,152 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX approval_by_expires ON approval_requests (expires_at);
     CREATE INDEX approval_by_status ON approval_requests (status);
     "#,
+    // 18 -> 19: Secure calendar federation (M11).
+    // Server identity keypair, pinned peer server certs, replay-nonce cache,
+    // per-federation capability + direction, remote-event id mapping (closes the
+    // cross-tenant overwrite bug), and the federation delivery outbox.
+    r#"
+    -- Singleton PGP identity for this server (secret TSK in the encrypted blob
+    -- store; only the fingerprint + blob pointer live here).
+    CREATE TABLE server_identity (
+        id           INTEGER PRIMARY KEY CHECK (id = 1),
+        fingerprint  TEXT NOT NULL,
+        blob_id      TEXT NOT NULL,
+        created_at   INTEGER NOT NULL
+    ) STRICT;
+
+    -- Public server certs pinned per peer domain (trust-on-first-use over TLS).
+    CREATE TABLE federation_peers (
+        domain       TEXT PRIMARY KEY,
+        server_url   TEXT NOT NULL,
+        cert         BLOB NOT NULL,
+        fingerprint  TEXT NOT NULL,
+        pinned_at    INTEGER NOT NULL,
+        last_seen    INTEGER
+    ) STRICT;
+
+    -- Seen request nonces, for replay rejection within the timestamp window.
+    CREATE TABLE federation_replay_nonce (
+        sender_fp   TEXT NOT NULL,
+        nonce       TEXT NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        PRIMARY KEY (sender_fp, nonce)
+    ) STRICT, WITHOUT ROWID;
+    CREATE INDEX federation_nonce_gc ON federation_replay_nonce (expires_at);
+
+    -- Authenticated-federation columns on the existing federation table.
+    ALTER TABLE calendar_federation ADD COLUMN peer_domain TEXT;
+    ALTER TABLE calendar_federation ADD COLUMN peer_fingerprint TEXT;
+    ALTER TABLE calendar_federation ADD COLUMN capability_secret TEXT;
+    ALTER TABLE calendar_federation ADD COLUMN direction TEXT;
+
+    -- Maps a peer's opaque event uid to a LOCAL server-minted event id, scoped
+    -- to the federation. Remote ids are never used as local primary keys.
+    CREATE TABLE federation_event_map (
+        federation_id  TEXT NOT NULL REFERENCES calendar_federation(id),
+        remote_uid     TEXT NOT NULL,
+        local_event_id TEXT NOT NULL REFERENCES calendar_events(id),
+        author_email   TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        PRIMARY KEY (federation_id, remote_uid)
+    ) STRICT;
+    CREATE INDEX federation_event_map_by_local ON federation_event_map (local_event_id);
+
+    -- Provenance markers on events so synced-in events don't echo back out.
+    ALTER TABLE calendar_events ADD COLUMN origin TEXT;
+    ALTER TABLE calendar_events ADD COLUMN origin_federation TEXT;
+
+    -- Durable outbox of signed webhook deliveries (mirrors the mail queue).
+    CREATE TABLE federation_outbox (
+        id            TEXT PRIMARY KEY,
+        federation_id TEXT NOT NULL REFERENCES calendar_federation(id),
+        peer_domain   TEXT NOT NULL,
+        payload       BLOB NOT NULL,
+        attempts      INTEGER NOT NULL DEFAULT 0,
+        next_attempt  INTEGER NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'queued',
+        last_error    TEXT,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX federation_outbox_due ON federation_outbox (status, next_attempt);
+    "#,
+    // 19 -> 20: Server-added email attributes (supersedes ai_annotations).
+    // One attribute per (email, kind), upserted by server-side detectors;
+    // clients may dismiss. Writes must bump the Email modseq so /changes and
+    // push observe them. ai_annotations stays dormant (never edit or drop a
+    // shipped migration's objects); a future migration removes it.
+    r#"
+    CREATE TABLE email_attributes (
+        id           TEXT PRIMARY KEY,
+        account_id   TEXT NOT NULL REFERENCES accounts(id),
+        email_id     TEXT NOT NULL REFERENCES emails(id),
+        kind         TEXT NOT NULL,
+        content      TEXT NOT NULL,
+        dismissed_at INTEGER,
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL,
+        UNIQUE (email_id, kind)
+    ) STRICT;
+    CREATE INDEX email_attributes_by_email ON email_attributes (email_id);
+    CREATE INDEX email_attributes_by_account ON email_attributes (account_id, kind);
+
+    -- Copy existing annotations; the old table allowed duplicates per
+    -- (email_id, kind), so keep only the newest (ids are UUIDv7, so id DESC
+    -- is a time-ordered tiebreak within equal created_at).
+    INSERT INTO email_attributes
+        (id, account_id, email_id, kind, content, dismissed_at, created_at, updated_at)
+    SELECT a.id, a.account_id, a.email_id, a.kind, a.content, NULL, a.created_at, a.created_at
+    FROM ai_annotations a
+    WHERE a.id = (SELECT b.id FROM ai_annotations b
+                  WHERE b.email_id = a.email_id AND b.kind = a.kind
+                  ORDER BY b.created_at DESC, b.id DESC LIMIT 1);
+    "#,
+    // 20 -> 21: Public scheduling pages ("book a meeting with me") + bookings.
+    // availability is a versioned JSON document (owney-storage/src/scheduling.rs).
+    // bookings.status is 'confirmed'|'cancelled' today; 'pending' is reserved
+    // for a future approval flow, cancel_token for future cancellation links.
+    r#"
+    CREATE TABLE scheduling_pages (
+        id                 TEXT PRIMARY KEY,
+        account_id         TEXT NOT NULL REFERENCES accounts(id),
+        slug               TEXT NOT NULL,
+        title              TEXT NOT NULL,
+        description        TEXT,
+        calendar_id        TEXT NOT NULL REFERENCES calendars(id),
+        timezone           TEXT NOT NULL,
+        availability       TEXT NOT NULL,
+        durations_mins     TEXT NOT NULL,
+        buffer_before_mins INTEGER NOT NULL DEFAULT 0,
+        buffer_after_mins  INTEGER NOT NULL DEFAULT 0,
+        min_notice_mins    INTEGER NOT NULL DEFAULT 0,
+        max_per_day        INTEGER,
+        valid_from         TEXT,
+        valid_until        TEXT,
+        status             TEXT NOT NULL DEFAULT 'active',
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL
+    ) STRICT;
+    CREATE UNIQUE INDEX scheduling_pages_by_slug ON scheduling_pages (slug);
+    CREATE INDEX scheduling_pages_by_account ON scheduling_pages (account_id);
+
+    CREATE TABLE bookings (
+        id            TEXT PRIMARY KEY,
+        page_id       TEXT NOT NULL REFERENCES scheduling_pages(id),
+        account_id    TEXT NOT NULL REFERENCES accounts(id),
+        event_id      TEXT NOT NULL REFERENCES calendar_events(id),
+        visitor_name  TEXT NOT NULL,
+        visitor_email TEXT NOT NULL,
+        note          TEXT,
+        start         INTEGER NOT NULL,
+        end           INTEGER NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'confirmed',
+        cancel_token  TEXT NOT NULL,
+        created_at    INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX bookings_by_page ON bookings (page_id, start);
+    CREATE INDEX bookings_by_account_time ON bookings (account_id, start, end);
+    "#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<(), StorageError> {
@@ -433,6 +579,56 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("version");
         assert_eq!(version as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn migration_20_dedups_ai_annotations() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        // Apply everything up to (not including) the email_attributes migration.
+        for (n, sql) in MIGRATIONS.iter().enumerate().take(19) {
+            let tx = conn.transaction().expect("tx");
+            tx.execute_batch(sql).expect("migration");
+            tx.pragma_update(None, "user_version", (n + 1) as i64)
+                .expect("version");
+            tx.commit().expect("commit");
+        }
+        // Disable FKs so no fixture accounts/emails are needed. Two rows for
+        // the same (email_id, kind): newest must win.
+        conn.pragma_update(None, "foreign_keys", "OFF").expect("fk");
+        conn.execute_batch(
+            "INSERT INTO ai_annotations (id, account_id, email_id, kind, content, created_at)
+             VALUES ('0198a000-0000-7000-8000-000000000001', 'acct', 'em1', 'summary', 'old', 100),
+                    ('0198a000-0000-7000-8000-000000000002', 'acct', 'em1', 'summary', 'new', 200),
+                    ('0198a000-0000-7000-8000-000000000003', 'acct', 'em1', 'unsubscribe', '{}', 150);",
+        )
+        .expect("seed");
+
+        apply(&mut conn).expect("finish migrations");
+
+        let rows: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT kind, content FROM email_attributes WHERE email_id = 'em1' ORDER BY kind",
+            )
+            .expect("prepare")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows");
+        assert_eq!(
+            rows,
+            vec![
+                ("summary".to_string(), "new".to_string()),
+                ("unsubscribe".to_string(), "{}".to_string()),
+            ]
+        );
+        let dismissed: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM email_attributes WHERE dismissed_at IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(dismissed, 0);
     }
 
     #[test]

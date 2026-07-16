@@ -196,6 +196,60 @@ enum AdminCommand {
     },
     /// Undo an AI action (see `admin ai-activity`).
     Undo { email: String, action_id: String },
+    /// Create a calendar for an account.
+    CreateCalendar {
+        /// The account's address.
+        email: String,
+        /// Calendar display name.
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Create a public "schedule a meeting" page (prints its URL).
+    CreateSchedulingPage {
+        /// The account's address.
+        email: String,
+        /// The calendar bookings land on (see `admin create-calendar`).
+        calendar_id: String,
+        /// Public URL path segment; defaults to the address's localpart.
+        #[arg(long)]
+        slug: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        /// IANA timezone the availability windows are expressed in.
+        #[arg(long, default_value = "UTC")]
+        timezone: String,
+        /// Meeting length in minutes.
+        #[arg(long, default_value_t = 30)]
+        duration: u32,
+    },
+    /// List an account's scheduling pages with their public URLs.
+    SchedulingPages {
+        /// The account's address.
+        email: String,
+    },
+    /// List bookings made through an account's scheduling pages.
+    Bookings {
+        /// The account's address.
+        email: String,
+    },
+    /// Create an event on a calendar (see `admin create-calendar`).
+    CreateEvent {
+        /// The account's address (must own the calendar).
+        email: String,
+        /// The calendar id.
+        calendar_id: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Start as a unix timestamp; defaults to one hour from now.
+        #[arg(long)]
+        start: Option<i64>,
+        /// End as a unix timestamp; defaults to start + 1 hour.
+        #[arg(long)]
+        end: Option<i64>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -646,33 +700,97 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         "urn:ietf:params:jmap:websocket",
         owney_api::push::websocket_capability(&public_url),
     );
+    let federation_public_url = public_url.clone();
+    let federation_config = owney_api::fed_sig::FederationConfig::from_env();
     let api_state = Arc::new(owney_api::ApiState {
         dispatcher,
         storage: storage.clone(),
         events: events.clone(),
         submitter: Some(delivery.clone() as Arc<dyn owney_delivery::Submitter>),
         public_url,
+        federation: federation_config.clone(),
     });
     let api_listener = tokio::net::TcpListener::bind(&config.api.listen)
         .await
         .with_context(|| format!("binding api listener on {}", config.api.listen))?;
     let api_task = tokio::spawn(async move {
-        if let Err(err) = axum::serve(api_listener, owney_api::router(api_state)).await {
+        if let Err(err) = axum::serve(
+            api_listener,
+            // ConnectInfo feeds the public scheduling endpoints' per-IP
+            // rate limiting.
+            owney_api::router(api_state)
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        {
             tracing::error!(%err, "api server exited");
         }
     });
 
-    // AI enrichment worker.
-    let ai_worker = if config.ai.enabled {
-        let provider = build_ai_provider(&config);
-        Some(owney_ai::worker::spawn_worker(
+    // Calendar federation workers (only when federation is enabled): a periodic
+    // reconciliation pull, an outbox drain for realtime push, and a bus
+    // subscriber that fans change notifications out to subscribed peers.
+    if federation_config.enabled {
+        // OWNEY_FEDERATION_SYNC_INTERVAL_SECS overrides the reconciliation
+        // pull interval (default 300s) — used by the local lab for fast sync.
+        let mut sync_config = owney_api::background_worker::SyncWorkerConfig::default();
+        if let Some(secs) = std::env::var("OWNEY_FEDERATION_SYNC_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            sync_config.interval_secs = secs;
+        }
+        let sync_worker = owney_api::background_worker::SyncWorker::new(
             storage.clone(),
-            events.clone(),
-            provider,
-            owney_ai::worker::AiConfig::default(),
-        ))
-    } else {
-        None
+            federation_public_url.clone(),
+            federation_config.clone(),
+            sync_config,
+        );
+        tokio::spawn(async move { sync_worker.run().await });
+
+        let notify_worker = owney_api::fed_worker::NotifyWorker::new(
+            storage.clone(),
+            federation_public_url.clone(),
+            federation_config.clone(),
+        );
+        tokio::spawn(async move { notify_worker.run().await });
+
+        let notify_storage = storage.clone();
+        let mut bus = events.subscribe();
+        tokio::spawn(async move {
+            use owney_events::Event;
+            while let Ok(event) = bus.recv().await {
+                if let Event::StateChange { account_id, .. } = &*event {
+                    // A change for this account may touch federated calendars;
+                    // enqueue notifications for each of the account's calendars.
+                    if let Ok(calendars) = notify_storage.list_calendars(*account_id).await {
+                        for cal in calendars {
+                            let _ = owney_api::fed_worker::notify_calendar_changed(
+                                &notify_storage,
+                                cal.id,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Enrichment worker: always spawned. With AI disabled it still runs the
+    // deterministic, metadata-only detectors (unsubscribe, calendar invite)
+    // so server attributes get produced; only mail-moving and model-backed
+    // skills are gated on `ai.enabled`.
+    let ai_worker = {
+        let (provider, ai_config) = if config.ai.enabled {
+            (
+                build_ai_provider(&config),
+                owney_ai::worker::AiConfig::default(),
+            )
+        } else {
+            (None, owney_ai::worker::AiConfig::deterministic_only())
+        };
+        owney_ai::worker::spawn_worker(storage.clone(), events.clone(), provider, ai_config)
     };
 
     // Health check daemon.
@@ -705,9 +823,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     worker.abort();
     doctor_worker.abort();
     renewal_worker.abort();
-    if let Some(ai_worker) = &ai_worker {
-        ai_worker.abort();
-    }
+    ai_worker.abort();
     drop(core);
     drop(delivery);
     // Dropping the last Storage reference joins the writer thread and
@@ -1056,6 +1172,160 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
                 .await
                 .map_err(|err| anyhow::anyhow!("{err}"))?;
             println!("undone");
+            Ok(())
+        }
+        AdminCommand::CreateCalendar {
+            email,
+            name,
+            description,
+        } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let calendar = storage
+                .create_calendar(account.id, name, description)
+                .await
+                .context("creating calendar")?;
+            println!("created calendar {} ({})", calendar.name, calendar.id);
+            Ok(())
+        }
+        AdminCommand::CreateSchedulingPage {
+            email,
+            calendar_id,
+            slug,
+            title,
+            timezone,
+            duration,
+        } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let calendar_id = calendar_id.parse().context("bad calendar id")?;
+            let localpart = email.split('@').next().unwrap_or("me");
+            let display = account
+                .display_name
+                .clone()
+                .unwrap_or_else(|| email.clone());
+            let page = storage
+                .create_scheduling_page(
+                    account.id,
+                    owney_storage::NewSchedulingPage {
+                        slug: slug.unwrap_or_else(|| {
+                            localpart
+                                .to_lowercase()
+                                .chars()
+                                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                                .collect()
+                        }),
+                        title: title.unwrap_or_else(|| format!("Meet with {display}")),
+                        description: None,
+                        calendar_id,
+                        timezone,
+                        availability: owney_storage::Availability::default_business_hours(),
+                        durations_mins: vec![duration],
+                        buffer_before_mins: 0,
+                        buffer_after_mins: 0,
+                        min_notice_mins: 0,
+                        max_per_day: None,
+                        valid_from: None,
+                        valid_until: None,
+                    },
+                )
+                .await
+                .context("creating scheduling page")?;
+            let base = if config.api.public_url.is_empty() {
+                format!("https://{}", config.server.hostname)
+            } else {
+                config.api.public_url.clone()
+            };
+            println!("created scheduling page {} ({})", page.slug, page.id);
+            println!("{}/schedule/{}", base.trim_end_matches('/'), page.slug);
+            Ok(())
+        }
+        AdminCommand::SchedulingPages { email } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let base = if config.api.public_url.is_empty() {
+                format!("https://{}", config.server.hostname)
+            } else {
+                config.api.public_url.clone()
+            };
+            for page in storage
+                .list_scheduling_pages(account.id)
+                .await
+                .context("listing pages")?
+            {
+                println!(
+                    "{}  {}  [{}]  {}/schedule/{}",
+                    page.id,
+                    page.title,
+                    page.status.as_str(),
+                    base.trim_end_matches('/'),
+                    page.slug,
+                );
+            }
+            Ok(())
+        }
+        AdminCommand::Bookings { email } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let bookings = storage
+                .list_bookings(account.id, None)
+                .await
+                .context("listing bookings")?;
+            if bookings.is_empty() {
+                println!("no bookings yet");
+            }
+            for b in bookings {
+                println!(
+                    "{}  {}  {} <{}>  [{}]",
+                    b.id,
+                    owney_core::time::iso8601_utc(b.start),
+                    b.visitor_name,
+                    b.visitor_email,
+                    b.status,
+                );
+            }
+            Ok(())
+        }
+        AdminCommand::CreateEvent {
+            email,
+            calendar_id,
+            title,
+            description,
+            start,
+            end,
+        } => {
+            let account = storage
+                .account_by_email(&email)
+                .await
+                .context("looking up account")?
+                .with_context(|| format!("no account {email}"))?;
+            let calendar_id = calendar_id.parse().context("bad calendar id")?;
+            // Ownership check: only the calendar's owner may add events here.
+            storage
+                .get_calendar(account.id, calendar_id)
+                .await
+                .context("looking up calendar")?
+                .with_context(|| format!("account {email} has no calendar {calendar_id}"))?;
+            let start = start.unwrap_or_else(|| unix_now() + 3600);
+            let end = end.unwrap_or(start + 3600);
+            anyhow::ensure!(end > start, "event must end after it starts");
+            let event = storage
+                .create_calendar_event(calendar_id, title, description, start, end, None)
+                .await
+                .context("creating event")?;
+            println!("created event {} ({})", event.title, event.id);
             Ok(())
         }
         AdminCommand::DisableAccount { email } => {

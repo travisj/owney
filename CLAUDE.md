@@ -35,6 +35,9 @@ cargo clippy --all --all-targets
 
 # Check everything
 cargo check && cargo test && cargo clippy && cargo fmt --check
+
+# Local two-instance testing lab (no DNS/TLS needed) — docs/LOCAL_TESTING.md
+scripts/lab.sh up
 ```
 
 ---
@@ -177,6 +180,40 @@ Calendar Federation - Multi-user sharing with cross-server support
 - `docs/CALENDAR_IMPLEMENTATION_SUMMARY.md` - What's implemented
 - `docs/CALENDAR_SYNC_INTEGRATION.md` - How to integrate the worker
 - `docs/CALENDAR_PHASE_2_5_SUMMARY.md` - Background worker details
+
+### Server-Added Email Attributes ✅
+- Flexible per-email structured data attached by server-side detectors
+- One attribute per (email, kind), upsert; client dismissal via JMAP
+- Kinds: `unsubscribe`, `calendarInvite`, `summary` (`needsAttention` reserved)
+- Writes bump the Email modseq + publish StateChange (visible to /changes + push)
+- Read via `Email/get` `serverAttributes`; dismiss via `EmailAttribute/dismiss`
+  under `urn:owney:params:jmap:attributes`
+
+**Files**:
+- `crates/owney-storage/src/attributes.rs` - Storage (set/list/dismiss)
+- `crates/owney-jmap-mail/src/attribute_methods.rs` - JMAP dismiss method
+- `crates/owney-ai/src/ics.rs` - Minimal RFC 5545 VEVENT extraction
+- `crates/owney-ai/src/skills.rs` - Detectors (unsubscribe, calendar invite, summary)
+
+**Docs**: `docs/SERVER_ATTRIBUTES.md`
+
+### Scheduling Pages (Calendly-style booking) ✅
+- Public `GET /schedule/{slug}` booking page, no auth; slots + book JSON APIs
+- Availability: versioned JSON (weekly windows, date overrides, buffers,
+  notice, day quota) in the page's IANA timezone; DST handled via chrono-tz
+- Atomic `book_slot` (busy check across all owner calendars + quota + insert
+  in one writer-thread transaction) → concurrent double-book gets 409
+- Confirmations: visitor via outbound queue, owner via direct ingest; both
+  carry a generated `text/calendar` METHOD:REQUEST invite
+- Owner surfaces: `SchedulingPage/get|set`, `SchedulingBooking/get` under
+  `urn:owney:params:jmap:scheduling`; `admin create-scheduling-page`
+
+**Files**:
+- `crates/owney-storage/src/scheduling.rs` - Model, validation, book_slot
+- `crates/owney-api/src/schedule/` - Routes, slots, ICS, MIME, rate limit
+- `crates/owney-jmap-mail/src/scheduling_methods.rs` - JMAP methods
+
+**Docs**: `docs/SCHEDULING.md`
 
 ### Future Features (M12+)
 - Calendar UI integration
@@ -515,35 +552,24 @@ cargo test -- --ignored
 
 ### Environment Variables
 
-**Calendar Federation**:
+Most configuration lives in the TOML config file (see `owneyd config example`
+and `crates/owney-core/src/config.rs`), NOT env vars. The real env vars:
+
+**Calendar Federation** (read by `FederationConfig::from_env` in
+`crates/owney-api/src/fed_sig.rs`):
 ```bash
-CALENDAR_SYNC_INTERVAL_SECS=300          # Poll interval (default 5 min)
-CALENDAR_SYNC_MAX_BACKOFF_SECS=3600      # Max backoff (default 1 hr)
-CALENDAR_SERVER_URL=https://owney.example.com
-# CALENDAR_FEDERATION_ENABLED=true
-# CALENDAR_FEDERATION_ALLOWLIST=server1.com,server2.com
+OWNEY_FEDERATION_ENABLED=1                    # mount federation endpoints + workers
+OWNEY_FEDERATION_ALLOW_PRIVATE_IPS=1          # dev only: allow http + loopback peers
+OWNEY_FEDERATION_URL_OVERRIDES=a.test=http://127.0.0.1:8381,b.test=http://127.0.0.1:8382
+OWNEY_FEDERATION_ALLOWLIST=server1.com        # unset = allow all domains
+OWNEY_FEDERATION_SYNC_INTERVAL_SECS=10        # reconciliation pull (default 300)
 ```
 
-**Storage**:
-```bash
-STORAGE_PATH=/var/lib/owney/storage.db
-BLOB_STORE_PATH=/var/lib/owney/blobs
-```
+**Other**: `RUST_LOG` (overrides `[log] filter`), and the AI provider key env
+named by `[ai] api_key_env` (default `ANTHROPIC_API_KEY`).
 
-**Backup** (M4-M5):
-```bash
-BACKUP_INTERVAL_SECS=86400               # Daily backups
-BACKUP_S3_BUCKET=my-backups
-BACKUP_S3_REGION=us-east-1
-# AWS credentials via AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-```
-
-**Server**:
-```bash
-LISTEN_ADDR=0.0.0.0:8008
-JMAP_SESSION_URL=https://owney.example.com
-PUBLIC_URL=https://owney.example.com
-```
+The server's own URL comes from `[api] public_url` in the config file (its
+host is the federation identity), not from any env var.
 
 ### Config File (Future)
 

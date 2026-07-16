@@ -76,6 +76,14 @@ uuid_id!(
     /// A contact in the address book.
     ContactId
 );
+uuid_id!(
+    /// A public "schedule a meeting" booking page.
+    SchedulingPageId
+);
+uuid_id!(
+    /// A visitor booking made through a scheduling page.
+    BookingId
+);
 
 /// A client-supplied creation reference (RFC 8620 §3.6.1). Distinct
 /// from server-assigned ids so the type system can catch mismatches;

@@ -277,6 +277,34 @@ impl Storage {
             .await
     }
 
+    /// Busy intervals across ALL of an account's calendars overlapping
+    /// [from, to) — half-open, so an event ending exactly at `from` is not
+    /// busy. Recurring events are NOT expanded (no rrule engine exists);
+    /// only the stored base occurrence blocks time.
+    pub async fn events_overlapping(
+        &self,
+        account_id: AccountId,
+        from: i64,
+        to: i64,
+    ) -> Result<Vec<(i64, i64)>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT e.start, e.end FROM calendar_events e
+                     JOIN calendars c ON c.id = e.calendar_id
+                     WHERE c.account_id = ?1 AND e.start < ?3 AND e.end > ?2
+                     ORDER BY e.start",
+                )?;
+                let rows = stmt
+                    .query_map(params![account_id.to_string(), from, to], |row| {
+                        Ok((row.get(0)?, row.get(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .await
+    }
+
     /// Update an event.
     pub async fn update_calendar_event(
         &self,
@@ -372,6 +400,142 @@ impl Storage {
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(events)
+            })
+            .await
+    }
+
+    /// Bounded, keyset-paged listing of events for federated serving. Orders by
+    /// `(updated_at, id)` and takes a compound cursor so ties at the page
+    /// boundary neither skip nor repeat. When `exclude_remote` is set, events
+    /// that were themselves synced in from a peer are omitted — this is what
+    /// stops two servers sharing a calendar both ways from echoing events back
+    /// and forth.
+    pub async fn list_calendar_events_page(
+        &self,
+        calendar_id: CalendarId,
+        after_updated_at: i64,
+        after_id: String,
+        limit: usize,
+        exclude_remote: bool,
+    ) -> Result<Vec<CalendarEvent>, StorageError> {
+        self.db
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, calendar_id, title, description, start, end, rrule, created_at, updated_at
+                     FROM calendar_events
+                     WHERE calendar_id = ?1
+                       AND (?2 = 0 OR origin IS NULL OR origin != 'remote')
+                       AND (updated_at > ?3 OR (updated_at = ?3 AND id > ?4))
+                     ORDER BY updated_at, id
+                     LIMIT ?5",
+                )?;
+                let events = stmt
+                    .query_map(
+                        params![
+                            calendar_id.to_string(),
+                            exclude_remote as i64,
+                            after_updated_at,
+                            after_id,
+                            limit as i64
+                        ],
+                        |row| {
+                            let id: EventId = row
+                                .get::<_, String>(0)?
+                                .parse()
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                            let calendar_id: CalendarId = row
+                                .get::<_, String>(1)?
+                                .parse()
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                            Ok(CalendarEvent {
+                                id,
+                                calendar_id,
+                                title: row.get(2)?,
+                                description: row.get(3)?,
+                                start: row.get(4)?,
+                                end: row.get(5)?,
+                                rrule: row.get(6)?,
+                                created_at: row.get(7)?,
+                                updated_at: row.get(8)?,
+                            })
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(events)
+            })
+            .await
+    }
+
+    /// Create an event that originated on a remote server (synced in). Marked
+    /// read-only via its `origin`, and excluded from re-serving. Returns the
+    /// local, server-minted event id — the remote id is never used as our key.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_remote_calendar_event(
+        &self,
+        calendar_id: CalendarId,
+        federation_id: &str,
+        title: String,
+        description: Option<String>,
+        start: i64,
+        end: i64,
+        rrule: Option<String>,
+    ) -> Result<EventId, StorageError> {
+        let event_id = EventId::new();
+        let out = event_id;
+        let federation_id = federation_id.to_owned();
+        self.db
+            .call(move |conn| {
+                let now = crate::unix_now();
+                conn.execute(
+                    "INSERT INTO calendar_events
+                       (id, calendar_id, title, description, start, end, rrule,
+                        created_at, updated_at, origin, origin_federation)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'remote', ?9)",
+                    params![
+                        event_id.to_string(),
+                        calendar_id.to_string(),
+                        title,
+                        description,
+                        start,
+                        end,
+                        rrule,
+                        now,
+                        federation_id,
+                    ],
+                )?;
+                Ok(out)
+            })
+            .await
+    }
+
+    /// Update a remote-origin event in place (keeps its local id and origin).
+    pub async fn update_remote_calendar_event(
+        &self,
+        event_id: EventId,
+        title: String,
+        description: Option<String>,
+        start: i64,
+        end: i64,
+        rrule: Option<String>,
+    ) -> Result<(), StorageError> {
+        self.db
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE calendar_events
+                     SET title = ?2, description = ?3, start = ?4, end = ?5, rrule = ?6,
+                         updated_at = ?7
+                     WHERE id = ?1 AND origin = 'remote'",
+                    params![
+                        event_id.to_string(),
+                        title,
+                        description,
+                        start,
+                        end,
+                        rrule,
+                        crate::unix_now()
+                    ],
+                )?;
+                Ok(())
             })
             .await
     }

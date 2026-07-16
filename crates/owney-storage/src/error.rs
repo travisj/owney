@@ -30,6 +30,12 @@ pub enum StorageError {
     #[error("account not found")]
     AccountNotFound,
 
+    #[error("not authorized")]
+    NotAuthorized,
+
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     #[error("storage is shut down")]
     Closed,
 

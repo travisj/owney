@@ -5,7 +5,9 @@
 //! per-type modseqs maintained by ms-storage — `/changes` is a direct range
 //! query, exactly the discipline the storage layer enforces on every write.
 
+mod attribute_methods;
 mod calendar_methods;
+mod scheduling_methods;
 
 use std::sync::Arc;
 
@@ -59,6 +61,38 @@ pub fn register(dispatcher: &mut Dispatcher<JmapCtx>) {
     dispatcher.register("EmailSubmission/set", SUBMISSION_CAPABILITY, submission_set);
     dispatcher.register("ChatPreference/get", MAIL_CAPABILITY, chat_preference_get);
     dispatcher.register("ChatPreference/set", MAIL_CAPABILITY, chat_preference_set);
+
+    // Server-added email attributes (read via Email/get `serverAttributes`).
+    dispatcher.add_capability(
+        attribute_methods::ATTRIBUTES_CAPABILITY,
+        attribute_methods::attributes_capability(),
+    );
+    dispatcher.register(
+        "EmailAttribute/dismiss",
+        attribute_methods::ATTRIBUTES_CAPABILITY,
+        attribute_methods::email_attribute_dismiss,
+    );
+
+    // Scheduling pages (public booking flow is HTTP; these are owner-side).
+    dispatcher.add_capability(
+        scheduling_methods::SCHEDULING_CAPABILITY,
+        scheduling_methods::scheduling_capability(),
+    );
+    dispatcher.register(
+        "SchedulingPage/get",
+        scheduling_methods::SCHEDULING_CAPABILITY,
+        scheduling_methods::scheduling_page_get,
+    );
+    dispatcher.register(
+        "SchedulingPage/set",
+        scheduling_methods::SCHEDULING_CAPABILITY,
+        scheduling_methods::scheduling_page_set,
+    );
+    dispatcher.register(
+        "SchedulingBooking/get",
+        scheduling_methods::SCHEDULING_CAPABILITY,
+        scheduling_methods::scheduling_booking_get,
+    );
 
     // Calendar methods
     dispatcher.add_capability(
@@ -159,8 +193,11 @@ impl Subset {
                 "attachments",
                 "hasAttachment",
                 "preview",
+                "sentAt",
                 "authResults",
                 "pgpStatus",
+                "chatMode",
+                "serverAttributes",
             ]
             .into_iter()
             .collect(),
@@ -331,7 +368,7 @@ async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError>
 
     let mut list = Vec::with_capacity(rows.len());
     for row in &rows {
-        let full = email_json(&ctx, row, args.fetch_text_body_values).await?;
+        let full = email_json(&ctx, account_id, row, args.fetch_text_body_values).await?;
         let map = full
             .as_object()
             .ok_or_else(|| MethodError::InvalidArguments("internal: email not object".into()))?;
@@ -354,7 +391,22 @@ async fn email_get(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, MethodError>
 /// Build the RFC 8621 Email object. Envelope-level metadata comes from the
 /// database; address headers, preview, and body text are parsed on demand
 /// from the (decrypted) raw blob.
-async fn email_json(ctx: &JmapCtx, row: &EmailRow, fetch_body: bool) -> Result<Value, MethodError> {
+async fn email_json(
+    ctx: &JmapCtx,
+    account_id: owney_core::AccountId,
+    row: &EmailRow,
+    fetch_body: bool,
+) -> Result<Value, MethodError> {
+    let email_id: owney_core::EmailId = row
+        .id
+        .parse()
+        .map_err(|_| MethodError::ServerFail("bad email id".into()))?;
+    let attributes = ctx
+        .storage
+        .list_email_attributes(account_id, email_id)
+        .await
+        .map_err(storage_err)?;
+
     let mut email = json!({
         "id": row.id,
         "blobId": row.blob_id,
@@ -370,6 +422,21 @@ async fn email_json(ctx: &JmapCtx, row: &EmailRow, fetch_body: bool) -> Result<V
             .as_deref()
             .and_then(|s| serde_json::from_str::<Value>(s).ok()),
         "chatMode": row.chat_mode,
+        "serverAttributes": attributes
+            .iter()
+            .map(|attr| {
+                (
+                    attr.kind.clone(),
+                    json!({
+                        "value": serde_json::from_str::<Value>(&attr.content)
+                            .unwrap_or_else(|_| Value::String(attr.content.clone())),
+                        "dismissed": attr.dismissed_at.is_some(),
+                        "createdAt": owney_core::time::iso8601_utc(attr.created_at),
+                        "updatedAt": owney_core::time::iso8601_utc(attr.updated_at),
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>(),
     });
 
     let blob_id = row

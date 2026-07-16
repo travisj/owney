@@ -28,6 +28,9 @@ rustls-pemfile = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
 urlencoding = "2.1"
+base64 = { workspace = true }
+blake3 = { workspace = true }
+sequoia-openpgp = { workspace = true }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 mime_guess = "2.0"
 anyhow = { workspace = true }
@@ -36,11 +39,15 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
+chrono-tz = "0.10"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+owney-events = { workspace = true }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+owney-ai = { path = "../owney-ai" }
+mail-parser = { workspace = true }
 
 [lints]
 workspace = true
