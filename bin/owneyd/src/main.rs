@@ -16,7 +16,7 @@ use std::future::Future;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "mailserverd",
+    name = "owneyd",
     version,
     about = "A mailserver for today",
     max_term_width = 100
@@ -387,7 +387,7 @@ async fn setup_acme(config: &Config) -> anyhow::Result<()> {
     println!("\n✓ Certificate provisioned successfully!");
     println!("  Cert: {}", cert_paths.cert.display());
     println!("  Key:  {}", cert_paths.key.display());
-    println!("\nNext: `mailserverd serve` will use HTTPS on port 443");
+    println!("\nNext: `owneyd serve` will use HTTPS on port 443");
 
     Ok(())
 }
@@ -457,8 +457,8 @@ fn setup(config_path: PathBuf, verify: bool, timeout: u64) -> anyhow::Result<()>
                 println!("{}\n", record.zone_line());
             }
             println!(
-                "Then: `mailserverd setup --verify` waits for them, and \
-                 `mailserverd doctor` checks everything else.\n"
+                "Then: `owneyd setup --verify` waits for them, and \
+                 `owneyd doctor` checks everything else.\n"
             );
 
             if verify {
@@ -507,7 +507,7 @@ async fn verify_records(records: &[owney_setup::DnsRecord], timeout: u64) -> any
             }
             anyhow::bail!(
                 "{} record(s) not verified in time (DNS can take a while to propagate — \
-                 run `mailserverd setup --verify` again)",
+                 run `owneyd setup --verify` again)",
                 pending.len()
             );
         }
@@ -1020,7 +1020,7 @@ async fn admin(config: Config, command: AdminCommand) -> anyhow::Result<()> {
         AdminCommand::Accounts => {
             let accounts = storage.accounts().await.context("listing accounts")?;
             if accounts.is_empty() {
-                println!("no accounts yet — create one with `mailserverd admin create-account`");
+                println!("no accounts yet — create one with `owneyd admin create-account`");
             }
             for account in accounts {
                 println!(
@@ -1713,7 +1713,7 @@ async fn backup(config: Config, command: BackupCommand) -> anyhow::Result<()> {
 
             println!("✓ Backup created: {}", archive_path.display());
             println!(
-                "  To restore: mailserverd backup restore {}",
+                "  To restore: owneyd backup restore {}",
                 archive_path.display()
             );
             Ok(())
@@ -1787,7 +1787,7 @@ async fn update(
     println!("✓ Update successful");
     println!("  New binary is now in place");
     println!("  IMPORTANT: You must restart the server for the update to take effect");
-    println!("  Suggested: systemctl restart mailserverd");
+    println!("  Suggested: systemctl restart owneyd");
     Ok(())
 }
 
