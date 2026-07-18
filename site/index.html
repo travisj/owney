@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owney — your own mail server</title>
+<meta name="description" content="Owney is a modern, self-hosted email and collaboration server: JMAP, IMAP, SMTP, calendars with federation, scheduling pages, and passkey sign-in — in one binary.">
+<style>
+  :root {
+    --bg: #faf9f7;
+    --fg: #1c1b1a;
+    --muted: #6b6862;
+    --accent: #b45309;
+    --accent-fg: #fff;
+    --card: #ffffff;
+    --border: #e7e4de;
+    --code-bg: #1c1b1a;
+    --code-fg: #f5f2ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513;
+      --fg: #ece9e3;
+      --muted: #a09c93;
+      --accent: #f59e0b;
+      --accent-fg: #1c1b1a;
+      --card: #201f1c;
+      --border: #33312c;
+      --code-bg: #0d0c0b;
+      --code-fg: #f5f2ec;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 96px 0 64px; text-align: center; }
+  .dog { font-size: 56px; line-height: 1; }
+  h1 { font-size: clamp(36px, 6vw, 56px); letter-spacing: -0.02em; margin: 16px 0 12px; }
+  .tagline { font-size: clamp(18px, 2.5vw, 22px); color: var(--muted); max-width: 640px; margin: 0 auto; }
+  .install {
+    margin: 40px auto 0; max-width: 720px;
+    background: var(--code-bg); color: var(--code-fg);
+    border-radius: 12px; padding: 18px 20px;
+    display: flex; align-items: center; gap: 16px;
+    text-align: left; overflow-x: auto;
+  }
+  .install code {
+    font: 15px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    white-space: nowrap; flex: 1;
+  }
+  .install code::before { content: "$ "; opacity: .5; }
+  .copy {
+    flex-shrink: 0; border: 1px solid rgba(255,255,255,.25); background: none;
+    color: var(--code-fg); border-radius: 8px; padding: 6px 14px;
+    font: 13px ui-sans-serif, system-ui, sans-serif; cursor: pointer;
+  }
+  .copy:hover { background: rgba(255,255,255,.1); }
+  .sub { margin-top: 14px; font-size: 14px; color: var(--muted); }
+  .sub a { color: var(--accent); }
+  section { padding: 48px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 26px; letter-spacing: -0.01em; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 6px; }
+  .card p { font-size: 15px; color: var(--muted); }
+  .steps { list-style: none; counter-reset: step; max-width: 640px; }
+  .steps li {
+    counter-increment: step; position: relative;
+    padding: 0 0 20px 52px;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px;
+  }
+  .steps code {
+    font: 14px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 8px;
+  }
+  .steps p { color: var(--muted); font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  td a { color: var(--accent); }
+  .tablewrap { overflow-x: auto; }
+  footer { padding: 40px 0 64px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="dog" aria-hidden="true">🐕📬</div>
+    <h1>Owney</h1>
+    <p class="tagline">Your own mail server. Email, calendars, scheduling, and sign-in — one binary, one SQLite file, zero tracking.</p>
+
+    <div class="install">
+      <code id="cmd">curl -fsSL https://travisj.github.io/owney/install.sh | sh</code>
+      <button class="copy" id="copy" type="button">Copy</button>
+    </div>
+    <p class="sub">Installs the latest build for Linux (x86_64, arm64) or macOS (Intel, Apple&nbsp;Silicon), verified by sha256. Or grab a <a href="#downloads">tarball</a> directly.</p>
+  </header>
+
+  <section>
+    <h2>Everything your domain needs</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Modern email, real standards</h3>
+        <p>JMAP (RFC&nbsp;8621) with push, plus IMAP and SMTP with DKIM, spam filtering, and full-text search built in.</p>
+      </div>
+      <div class="card">
+        <h3>Calendars that federate</h3>
+        <p>Share calendars with people on your server — or on someone else's. Cross-server sync with granular permissions.</p>
+      </div>
+      <div class="card">
+        <h3>Booking pages</h3>
+        <p>Publish a public scheduling page from your own domain. Visitors pick a slot; both sides get a real calendar invite. No third party.</p>
+      </div>
+      <div class="card">
+        <h3>Sign in with Owney</h3>
+        <p>A built-in OpenID Connect provider with passkey login, so your apps can authenticate against the identity you already run.</p>
+      </div>
+      <div class="card">
+        <h3>Private by default</h3>
+        <p>Encrypted storage, PGP support, no telemetry, and full S3 backups with point-in-time recovery. Your data stays yours.</p>
+      </div>
+      <div class="card">
+        <h3>One binary, one file</h3>
+        <p><code>owneyd</code> serves everything; SQLite stores everything. Setup wizard, health doctor, and safe self-update included.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Up and running in three commands</h2>
+    <ol class="steps">
+      <li>
+        <code>curl -fsSL https://travisj.github.io/owney/install.sh | sh</code>
+        <p>Install the latest build for your platform.</p>
+      </li>
+      <li>
+        <code>owneyd setup</code>
+        <p>The first-run wizard creates your config, generates keys, prints the DNS records for your domain, and can wait until they verify.</p>
+      </li>
+      <li>
+        <code>owneyd serve</code>
+        <p>Serve mail, calendars, the web UI, and booking pages. Run <code>owneyd doctor</code> anytime to check DNS, TLS, and deliverability.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="downloads">
+    <h2>Direct downloads</h2>
+    <p style="color: var(--muted); margin-bottom: 16px;">Built automatically from every merge to <code>main</code>. Each tarball contains the <code>owneyd</code> binary and the web UI, with a <code>.sha256</code> alongside. Linux builds are fully static (musl).</p>
+    <div class="tablewrap">
+      <table>
+        <tr><th>Platform</th><th>Download</th></tr>
+        <tr><td>Linux x86_64 (static)</td><td><a href="https://github.com/travisj/owney/releases/download/latest/owneyd-linux-x86_64.tar.gz">owneyd-linux-x86_64.tar.gz</a></td></tr>
+        <tr><td>Linux arm64 (static)</td><td><a href="https://github.com/travisj/owney/releases/download/latest/owneyd-linux-aarch64.tar.gz">owneyd-linux-aarch64.tar.gz</a></td></tr>
+        <tr><td>macOS Apple Silicon</td><td><a href="https://github.com/travisj/owney/releases/download/latest/owneyd-macos-aarch64.tar.gz">owneyd-macos-aarch64.tar.gz</a></td></tr>
+        <tr><td>macOS Intel</td><td><a href="https://github.com/travisj/owney/releases/download/latest/owneyd-macos-x86_64.tar.gz">owneyd-macos-x86_64.tar.gz</a></td></tr>
+      </table>
+    </div>
+    <p class="sub">Pinned versions are published as <a href="https://github.com/travisj/owney/releases">tagged releases</a>.</p>
+  </section>
+
+  <footer>
+    <p>Owney is free software, licensed <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>. Source on <a href="https://github.com/travisj/owney">GitHub</a>.</p>
+    <p style="margin-top: 8px;">Named for <a href="https://postalmuseum.si.edu/exhibition/owney-mascot-of-the-railway-mail-service">Owney</a>, the terrier who rode the Railway Mail Service and always found his way home — like your mail should.</p>
+  </footer>
+</div>
+
+<script>
+  document.getElementById('copy').addEventListener('click', function () {
+    var btn = this;
+    navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(function () {
+      btn.textContent = 'Copied!';
+      setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+    });
+  });
+</script>
+
+</body>
+</html>
