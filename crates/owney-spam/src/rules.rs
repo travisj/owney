@@ -1,7 +1,6 @@
 //! Heuristic spam detection rules (traditional SpamAssassin-style).
 
-use std::collections::HashMap;
-
+#[derive(Debug)]
 pub struct RulesVerdict {
     pub score: f32,
     pub matched_rules: Vec<String>,
@@ -68,11 +67,11 @@ pub fn check_message(raw: &[u8]) -> RulesVerdict {
     }
 
     // Check for common phishing patterns in Subject/From
-    if let Some(subject) = extract_header(&msg_str, "Subject") {
-        if contains_phishing_keyword(&subject) {
-            score += 0.20;
-            matched_rules.push("PHISHING_SUBJECT".to_string());
-        }
+    if let Some(subject) = extract_header(&msg_str, "Subject")
+        && contains_phishing_keyword(&subject)
+    {
+        score += 0.20;
+        matched_rules.push("PHISHING_SUBJECT".to_string());
     }
 
     RulesVerdict {

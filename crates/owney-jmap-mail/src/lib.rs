@@ -14,7 +14,6 @@ use std::sync::Arc;
 use jmap_core::{Dispatcher, MethodError};
 use owney_api::JmapCtx;
 use owney_core::DataType;
-use owney_spam;
 use owney_storage::EmailRow;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1007,7 +1006,7 @@ async fn chat_preference_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Me
                 .get("preference")
                 .and_then(Value::as_str)
                 .ok_or("preference is required".to_owned())?;
-            let preference = owney_storage::ChatMode::from_str(pref_str)
+            let preference = owney_storage::ChatMode::parse(pref_str)
                 .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
 
             ctx.storage
@@ -1037,7 +1036,7 @@ async fn chat_preference_set(args: Value, ctx: Arc<JmapCtx>) -> Result<Value, Me
                 .get("preference")
                 .and_then(Value::as_str)
                 .ok_or("preference is required".to_owned())?;
-            let preference = owney_storage::ChatMode::from_str(pref_str)
+            let preference = owney_storage::ChatMode::parse(pref_str)
                 .ok_or_else(|| format!("invalid preference: {}", pref_str))?;
 
             ctx.storage

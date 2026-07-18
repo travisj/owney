@@ -9,6 +9,8 @@ use owney_storage::Storage;
 /// Per-connection IMAP session state.
 pub struct ImapSession {
     storage: Arc<Storage>,
+    // Kept for forthcoming logging/UNTAGGED support in the IMAP bridge.
+    #[allow(dead_code)]
     remote: IpAddr,
     /// Currently authenticated account (None until LOGIN succeeds).
     account: Option<(AccountId, String)>,
@@ -17,7 +19,18 @@ pub struct ImapSession {
     /// Command tag from client (for response correlation).
     last_tag: String,
     /// Sequence number for UNTAGGED responses.
+    #[allow(dead_code)]
     sequence: u32,
+}
+
+impl std::fmt::Debug for ImapSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImapSession")
+            .field("remote", &self.remote)
+            .field("account", &self.account)
+            .field("selected_mailbox", &self.selected_mailbox)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ImapSession {

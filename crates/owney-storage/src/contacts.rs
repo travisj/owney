@@ -219,8 +219,6 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
-    use super::Storage;
-
     #[allow(dead_code)]
     async fn harness(tmp: &tempfile::TempDir) -> (crate::Storage, owney_events::EventBus) {
         crate::tests::open(tmp.path()).await

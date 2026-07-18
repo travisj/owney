@@ -262,6 +262,7 @@ fn validate_slug(slug: &str) -> Result<(), StorageError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_common(
     timezone: &str,
     availability: &Availability,
@@ -624,23 +625,19 @@ impl Storage {
                             "SELECT {BOOKING_COLUMNS} FROM bookings
                              WHERE account_id = ?1 AND page_id = ?2 ORDER BY start"
                         ))?;
-                        let rows = stmt
-                            .query_map(
-                                params![account_id.to_string(), page_id.to_string()],
-                                row_to_booking,
-                            )?
-                            .collect::<Result<Vec<_>, _>>()?;
-                        rows
+                        stmt.query_map(
+                            params![account_id.to_string(), page_id.to_string()],
+                            row_to_booking,
+                        )?
+                        .collect::<Result<Vec<_>, _>>()?
                     }
                     None => {
                         let mut stmt = conn.prepare(&format!(
                             "SELECT {BOOKING_COLUMNS} FROM bookings
                              WHERE account_id = ?1 ORDER BY start"
                         ))?;
-                        let rows = stmt
-                            .query_map([account_id.to_string()], row_to_booking)?
-                            .collect::<Result<Vec<_>, _>>()?;
-                        rows
+                        stmt.query_map([account_id.to_string()], row_to_booking)?
+                            .collect::<Result<Vec<_>, _>>()?
                     }
                 };
                 Ok(rows)

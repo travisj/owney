@@ -401,6 +401,7 @@ impl Storage {
 
     /// Filter a list of email IDs by mailbox, keywords, dates, and thread.
     /// Used by Email/query when text search results need further filtering.
+    #[allow(clippy::too_many_arguments)]
     pub async fn filter_emails(
         &self,
         account_id: AccountId,
@@ -506,6 +507,7 @@ impl Storage {
     }
 
     /// Query emails with RFC 8621 filters (for non-text path).
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_emails_with_filters(
         &self,
         account_id: AccountId,

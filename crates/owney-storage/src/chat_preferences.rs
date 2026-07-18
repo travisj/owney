@@ -33,7 +33,7 @@ impl ChatMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "auto_chat" => Some(ChatMode::AutoChat),
             "never_chat" => Some(ChatMode::NeverChat),
@@ -61,7 +61,7 @@ impl Storage {
                         |row| row.get::<_, String>(0),
                     )
                     .optional()?
-                    .and_then(|s| ChatMode::from_str(&s))
+                    .and_then(|s| ChatMode::parse(&s))
                     .unwrap_or(ChatMode::RespectSender))
             })
             .await
@@ -122,7 +122,7 @@ impl Storage {
                         Ok(ChatPreference {
                             account_id: account_id_str.parse().unwrap_or_else(|_| AccountId::new()),
                             contact_email,
-                            preference: ChatMode::from_str(&preference_str)
+                            preference: ChatMode::parse(&preference_str)
                                 .unwrap_or(ChatMode::RespectSender),
                             created_at,
                             updated_at,

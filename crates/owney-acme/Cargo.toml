@@ -18,6 +18,10 @@ thiserror = { workspace = true }
 
 # ACME protocol
 acme2 = "0.5"
+# acme2 requires openssl; vendor it so builds stay fully static (musl) and
+# never link system OpenSSL. TODO: replace acme2 with a rustls-based client
+# (e.g. instant-acme) to drop OpenSSL entirely — see deny.toml [bans].
+openssl = { version = "0.10", features = ["vendored"] }
 x509-parser = "0.16"
 
 # Cryptography & certificate generation

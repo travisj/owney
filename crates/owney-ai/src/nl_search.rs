@@ -1,13 +1,13 @@
 //! Natural language search: translate "unread from my boss" to JMAP filters.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::AiError;
 use crate::provider::{AiProvider, StructuredRequest};
 
 /// The structured output from NL→JMAP translation.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct JmapFilter {
     /// Mailboxes to search (inbox, sent, archive, etc.). Empty = all mailboxes.
     pub mailboxes: Vec<String>,
@@ -28,22 +28,6 @@ pub struct JmapFilter {
     pub text: Option<String>,
     /// Thread ID to restrict to (single thread).
     pub thread_id: Option<String>,
-}
-
-impl Default for JmapFilter {
-    fn default() -> Self {
-        Self {
-            mailboxes: vec![],
-            from: None,
-            subject: None,
-            to: None,
-            since: None,
-            before: None,
-            flags: None,
-            text: None,
-            thread_id: None,
-        }
-    }
 }
 
 /// Translate natural language query to JMAP filter using Claude.
@@ -107,12 +91,13 @@ mod tests {
 
     #[test]
     fn jmap_filter_serialization() {
-        let mut filter = JmapFilter::default();
-        filter.from = Some("alice@example.com".to_string());
-        filter.flags = {
-            let mut m = std::collections::HashMap::new();
-            m.insert("$Seen".to_string(), false);
-            Some(m)
+        let filter = JmapFilter {
+            from: Some("alice@example.com".to_string()),
+            flags: Some(std::collections::HashMap::from([(
+                "$Seen".to_string(),
+                false,
+            )])),
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&filter).expect("serialize");

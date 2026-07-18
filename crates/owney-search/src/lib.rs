@@ -27,6 +27,13 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+/// Look up a schema field that `email_schema` is expected to have defined.
+fn field(schema: &Schema, name: &str) -> Result<Field, SearchError> {
+    schema
+        .get_field(name)
+        .ok_or_else(|| SearchError::Tantivy(format!("schema missing field {name}")))
+}
+
 /// Schema: email_id (primary key), from, to, subject, body (full-text).
 fn email_schema() -> Schema {
     let mut schema_builder = Schema::builder();
@@ -84,11 +91,11 @@ impl IndexWriter {
         let schema = self.index.schema();
         let mut doc = Document::new();
 
-        doc.add_text(schema.get_field("email_id").unwrap(), &email_id.to_string());
-        doc.add_text(schema.get_field("from").unwrap(), from);
-        doc.add_text(schema.get_field("to").unwrap(), to);
-        doc.add_text(schema.get_field("subject").unwrap(), subject);
-        doc.add_text(schema.get_field("body").unwrap(), body);
+        doc.add_text(field(&schema, "email_id")?, email_id.to_string());
+        doc.add_text(field(&schema, "from")?, from);
+        doc.add_text(field(&schema, "to")?, to);
+        doc.add_text(field(&schema, "subject")?, subject);
+        doc.add_text(field(&schema, "body")?, body);
 
         self.writer
             .add_document(doc)
@@ -100,12 +107,10 @@ impl IndexWriter {
     /// Delete an email from the index.
     pub async fn delete_email(&mut self, email_id: EmailId) -> Result<(), SearchError> {
         let schema = self.index.schema();
-        let query = tantivy::query::QueryParser::for_index(
-            &self.index,
-            vec![schema.get_field("email_id").unwrap()],
-        )
-        .parse_query(&email_id.to_string())
-        .map_err(|e| SearchError::Tantivy(e.to_string()))?;
+        let query =
+            tantivy::query::QueryParser::for_index(&self.index, vec![field(&schema, "email_id")?])
+                .parse_query(&email_id.to_string())
+                .map_err(|e| SearchError::Tantivy(e.to_string()))?;
 
         self.writer
             .delete_query(Box::new(query))
@@ -159,10 +164,10 @@ impl IndexReader {
         let query_parser = tantivy::query::QueryParser::for_index(
             &self.index,
             vec![
-                schema.get_field("subject").unwrap(),
-                schema.get_field("body").unwrap(),
-                schema.get_field("from").unwrap(),
-                schema.get_field("to").unwrap(),
+                field(&schema, "subject")?,
+                field(&schema, "body")?,
+                field(&schema, "from")?,
+                field(&schema, "to")?,
             ],
         );
 
@@ -174,18 +179,15 @@ impl IndexReader {
             .search(&query, &tantivy::collector::TopDocs::with_limit(limit))
             .map_err(|e| SearchError::Tantivy(e.to_string()))?;
 
+        let email_id_field = field(&schema, "email_id")?;
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
-            if let Ok(doc) = searcher.doc(doc_address) {
-                if let Some(email_id_field) = schema.get_field("email_id") {
-                    if let Some(email_id_val) = doc.get_first(email_id_field) {
-                        if let Some(email_id_str) = email_id_val.as_text() {
-                            if let Ok(email_id) = email_id_str.parse() {
-                                results.push(SearchResult { email_id, score });
-                            }
-                        }
-                    }
-                }
+            if let Ok(doc) = searcher.doc(doc_address)
+                && let Some(email_id_val) = doc.get_first(email_id_field)
+                && let Some(email_id_str) = email_id_val.as_text()
+                && let Ok(email_id) = email_id_str.parse()
+            {
+                results.push(SearchResult { email_id, score });
             }
         }
 

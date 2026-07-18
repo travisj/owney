@@ -40,6 +40,7 @@ impl Default for SpamVerdict {
 }
 
 /// Input to the spam scanner.
+#[derive(Debug)]
 pub struct SpamInput<'a> {
     /// Remote IP address (for DNSBL checks).
     pub remote_ip: IpAddr,
@@ -58,6 +59,7 @@ pub trait SpamScanner: Send + Sync {
 }
 
 /// Heuristic spam scanner combining DNSBL, rules, and Bayes.
+#[derive(Debug)]
 pub struct HeuristicScanner {
     /// DNSBL zones to check (e.g., ["zen.spamhaus.org"]).
     pub zones: Vec<String>,
@@ -96,7 +98,7 @@ impl SpamScanner for HeuristicScanner {
         }
 
         // Clamp score to [0, 1]
-        verdict.score = verdict.score.max(0.0).min(1.0);
+        verdict.score = verdict.score.clamp(0.0, 1.0);
         verdict
     }
 }

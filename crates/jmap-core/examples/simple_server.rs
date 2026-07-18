@@ -172,7 +172,7 @@ async fn handle_connection(
                 Ok(session) => {
                     let json_body = serde_json::to_string(&session).map_err(|e| {
                         eprintln!("Failed to serialize session: {}", e);
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                     send_json_response(&mut writer, 200, &json_body).await?;
                     return Ok(());

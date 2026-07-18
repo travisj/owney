@@ -618,6 +618,7 @@ mod tests {
     }
 
     /// Build the headers a legitimate sender `a.test` would attach.
+    #[allow(clippy::too_many_arguments)]
     fn signed_headers(
         sender_cert: &Cert,
         sender_domain: &str,

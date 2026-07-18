@@ -605,7 +605,7 @@ pub async fn recovery_code_use(
         .session_tokens
         .generate_token(recovery_code.account_id.clone())
         .await
-        .map_err(|e| AuthError::Config(e))?;
+        .map_err(AuthError::Config)?;
 
     tracing::info!(account_id = %recovery_code.account_id, "recovery code used for authentication");
 
@@ -795,7 +795,7 @@ pub async fn qr_code_pairing(
         .challenge_store
         .store_pairing_code(pairing_code.clone())
         .await
-        .map_err(|e| AuthError::Config(e))?;
+        .map_err(AuthError::Config)?;
 
     // Generate QR code (simplified - contains code_id for retrieval)
     // In production, this would encode the full pairing URL

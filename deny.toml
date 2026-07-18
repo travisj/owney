@@ -4,6 +4,27 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # rsa: Marvin attack timing sidechannel. No fixed release exists yet
+  # (tracked upstream: https://github.com/RustCrypto/RSA/issues/19). Used for
+  # DKIM signing where the attacker-observable timing surface is minimal.
+  "RUSTSEC-2023-0071",
+  # instant is unmaintained; pulled in via tantivy 0.19 -> measure_time.
+  # Goes away when tantivy is upgraded (0.20+ dropped measure_time/instant).
+  "RUSTSEC-2024-0384",
+  # rustls-pemfile is unmaintained (both 1.x via the AWS SDK and our direct
+  # 2.x). TODO: migrate our usage to rustls-pki-types' PemObject.
+  "RUSTSEC-2025-0134",
+  # lz4_flex uninitialized-memory leak, fixed in 0.11.6/0.12.1; tantivy 0.19
+  # pins ^0.9 so we cannot update it. Goes away when tantivy is upgraded.
+  "RUSTSEC-2026-0041",
+  # rustls-webpki 0.101 name-constraint/CRL issues; pinned by the AWS SDK's
+  # rustls 0.21 stack, used only for the S3 backup client (server TLS uses
+  # rustls 0.23). Clears when the AWS SDK moves to a newer rustls.
+  "RUSTSEC-2026-0098",
+  "RUSTSEC-2026-0099",
+  "RUSTSEC-2026-0104",
+]
 
 [licenses]
 version = 2
@@ -19,15 +40,25 @@ allow = [
   "Unicode-3.0",
   "MPL-2.0",
   # our own code
-  "AGPL-3.0",
-  # sequoia-openpgp (M4)
-  "LGPL-2.0",
+  "AGPL-3.0-only",
+  # sequoia-openpgp, buffered-reader
+  "LGPL-2.0-or-later",
+  # webpki-roots / webpki-root-certs (Mozilla CA bundle data)
+  "CDLA-Permissive-2.0",
+  # libbz2-rs-sys
+  "bzip2-1.0.6",
+  # xxhash-rust
+  "BSL-1.0",
 ]
 
 [bans]
 multiple-versions = "warn"
-# the deployment story is a single static binary; never link system OpenSSL
-deny = [{ name = "openssl-sys" }, { name = "native-tls" }]
+# The deployment story is a single static binary: never link system TLS.
+# openssl-sys is tolerated for now ONLY because acme2 requires it, and
+# owney-acme enables `openssl/vendored` so it is compiled in statically.
+# TODO: replace acme2 with a rustls-based ACME client (e.g. instant-acme),
+# then restore `{ name = "openssl-sys" }` to this deny list.
+deny = [{ name = "native-tls" }]
 
 [sources]
 unknown-registry = "deny"

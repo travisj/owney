@@ -20,7 +20,6 @@ pub mod commands;
 pub mod server;
 pub mod session;
 
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use owney_core::Config;

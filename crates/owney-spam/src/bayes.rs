@@ -46,8 +46,8 @@ type TokenCounts = HashMap<String, (u32, u32)>;
 
 /// Compute P(spam | tokens) using Naive Bayes with Laplace smoothing.
 fn bayes_probability(counts: &TokenCounts, tokens: &[String]) -> f32 {
+    // Prior P(spam) is non-informative (0.5), so it contributes nothing in log-odds.
     const SMOOTHING: f32 = 1.0; // Laplace smoothing
-    const PRIOR_SPAM: f32 = 0.5; // Prior P(spam), non-informative
 
     let mut log_spam_ratio = 0.0f32;
 
@@ -70,7 +70,7 @@ fn bayes_probability(counts: &TokenCounts, tokens: &[String]) -> f32 {
 
     // Convert log-odds back to probability: P(spam | tokens) = 1 / (1 + exp(-log_ratio))
     let probability = 1.0 / (1.0 + (-log_spam_ratio).exp());
-    probability.max(0.0).min(1.0)
+    probability.clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

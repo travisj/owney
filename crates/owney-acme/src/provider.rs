@@ -148,21 +148,20 @@ impl DnsProvider for CloudflareProvider {
                 urlencoding::encode(&fqdn)
             );
 
-            if let Ok(response) = client.get(&query_url).send().await {
-                if let Ok(data) = response.json::<serde_json::Value>().await {
-                    if let Some(answers) = data["Answer"].as_array() {
-                        for answer in answers {
-                            if let Some(data_field) = answer["data"].as_str() {
-                                let trimmed = data_field.trim_matches('"');
-                                if trimmed == challenge_value {
-                                    tracing::info!(
-                                        domain = %domain,
-                                        fqdn = %fqdn,
-                                        "DNS propagation confirmed"
-                                    );
-                                    return Ok(());
-                                }
-                            }
+            if let Ok(response) = client.get(&query_url).send().await
+                && let Ok(data) = response.json::<serde_json::Value>().await
+                && let Some(answers) = data["Answer"].as_array()
+            {
+                for answer in answers {
+                    if let Some(data_field) = answer["data"].as_str() {
+                        let trimmed = data_field.trim_matches('"');
+                        if trimmed == challenge_value {
+                            tracing::info!(
+                                domain = %domain,
+                                fqdn = %fqdn,
+                                "DNS propagation confirmed"
+                            );
+                            return Ok(());
                         }
                     }
                 }
@@ -314,21 +313,20 @@ impl DnsProvider for Route53Provider {
                 urlencoding::encode(&fqdn)
             );
 
-            if let Ok(response) = client.get(&query_url).send().await {
-                if let Ok(data) = response.json::<serde_json::Value>().await {
-                    if let Some(answers) = data["Answer"].as_array() {
-                        for answer in answers {
-                            if let Some(data_field) = answer["data"].as_str() {
-                                let trimmed = data_field.trim_matches('"');
-                                if trimmed == challenge_value {
-                                    tracing::info!(
-                                        domain = %domain,
-                                        fqdn = %fqdn,
-                                        "DNS propagation confirmed via Route53"
-                                    );
-                                    return Ok(());
-                                }
-                            }
+            if let Ok(response) = client.get(&query_url).send().await
+                && let Ok(data) = response.json::<serde_json::Value>().await
+                && let Some(answers) = data["Answer"].as_array()
+            {
+                for answer in answers {
+                    if let Some(data_field) = answer["data"].as_str() {
+                        let trimmed = data_field.trim_matches('"');
+                        if trimmed == challenge_value {
+                            tracing::info!(
+                                domain = %domain,
+                                fqdn = %fqdn,
+                                "DNS propagation confirmed via Route53"
+                            );
+                            return Ok(());
                         }
                     }
                 }

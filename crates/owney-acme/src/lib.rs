@@ -67,7 +67,7 @@ pub struct CertPaths {
 
 impl CertPaths {
     /// Creates paths in a data directory.
-    pub fn in_dir(data_dir: &PathBuf) -> Self {
+    pub fn in_dir(data_dir: &std::path::Path) -> Self {
         let tls_dir = data_dir.join("tls");
         Self {
             cert: tls_dir.join("cert.pem"),

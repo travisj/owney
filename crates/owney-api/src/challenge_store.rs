@@ -183,7 +183,7 @@ impl SessionTokenManager {
         };
 
         let mut hasher = Sha256::new();
-        hasher.update(&random_bytes);
+        hasher.update(random_bytes);
         hasher.update(account_id.as_bytes());
         hasher.update(Utc::now().timestamp().to_string());
 

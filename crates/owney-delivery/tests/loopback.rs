@@ -297,8 +297,8 @@ async fn chat_mode_flag_stored_and_retrieved() {
         .iter()
         .find(|r| r.id == chat_ingested.id.to_string())
         .expect("find chat email");
-    assert_eq!(
-        chat_row.chat_mode, true,
+    assert!(
+        chat_row.chat_mode,
         "chat-mode email should have chat_mode=true"
     );
 
@@ -306,8 +306,8 @@ async fn chat_mode_flag_stored_and_retrieved() {
         .iter()
         .find(|r| r.id == normal_ingested.id.to_string())
         .expect("find normal email");
-    assert_eq!(
-        normal_row.chat_mode, false,
+    assert!(
+        !normal_row.chat_mode,
         "normal email should have chat_mode=false"
     );
 }
